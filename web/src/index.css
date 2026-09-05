@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* ── Layout surfaces ──────────────────────────────────────────── */
+  --bg:              #09090b;
+  --sidebar-bg:      #0f0f11;
+  --sidebar-hover:   rgba(255, 255, 255, 0.04);
+  --sidebar-active:  rgba(255, 255, 255, 0.07);
+  --card:            #111113;
+  --input-bg:        #0f0f11;
+
+  /* ── Text ─────────────────────────────────────────────────────── */
+  --fg:              #fafafa;
+  --fg-muted:        #71717a;
+  --fg-subtle:       #3f3f46;
+
+  /* ── Accent (neutral — no orange) ────────────────────────────── */
+  --primary:         #fafafa;           /* same as --fg in dark */
+  --primary-dim:     rgba(255,255,255,0.07);  /* subtle grey highlight */
+  --blue:            #456DE6;
+  --green:           #22c55e;
+  --red:             #ef4444;
+
+  /* ── Borders ──────────────────────────────────────────────────── */
+  --border:          rgba(255, 255, 255, 0.07);
+  --border-focus:    rgba(255, 255, 255, 0.35);
+
+  /* legacy aliases */
+  --color-background: var(--bg);
+  --color-midground:  var(--card);
+  --color-foreground: var(--fg);
+  --color-primary:    var(--primary);
+  --color-border:     var(--border);
+  --color-muted:      var(--fg-muted);
+
+  /* ── Button theme ─────────────────────────────────────────────── */
+  --btn-bg:          #ffffff;
+  --btn-fg:          #000000;
+  --btn-bg-disabled: rgba(255,255,255,0.12);
+  --btn-fg-disabled: rgba(255,255,255,0.3);
+}
+
+/* Light theme — manual toggle */
+[data-theme="light"] {
+  --bg:              #f4f4f5;
+  --sidebar-bg:      #ffffff;
+  --sidebar-hover:   rgba(0,0,0,0.04);
+  --sidebar-active:  rgba(0,0,0,0.07);
+  --card:            #ffffff;
+  --input-bg:        #f1f1f1;
+  --fg:              #18181b;
+  --fg-muted:        #52525b;
+  --fg-subtle:       #a1a1aa;
+  --border:          rgba(0,0,0,0.10);
+  --border-focus:    rgba(0,0,0,0.35);
+  --primary:         #18181b;           /* same as --fg in light */
+  --primary-dim:     rgba(0,0,0,0.07);  /* subtle grey highlight */
+  --color-background: var(--bg);
+  --color-midground:  var(--card);
+  --color-foreground: var(--fg);
+  --color-primary:    var(--primary);
+  --color-border:     var(--border);
+  --color-muted:      var(--fg-muted);
+  --btn-bg:          #18181b;
+  --btn-fg:          #ffffff;
+  --btn-bg-disabled: rgba(0,0,0,0.12);
+  --btn-fg-disabled: rgba(0,0,0,0.3);
+}
+
+/* System light fallback */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg:              #f4f4f5;
+    --sidebar-bg:      #ffffff;
+    --sidebar-hover:   rgba(0,0,0,0.04);
+    --sidebar-active:  rgba(0,0,0,0.07);
+    --card:            #ffffff;
+    --input-bg:        #f1f1f1;
+    --fg:              #18181b;
+    --fg-muted:        #52525b;
+    --fg-subtle:       #a1a1aa;
+    --border:          rgba(0,0,0,0.10);
+    --border-focus:    rgba(0,0,0,0.35);
+    --primary:         #18181b;
+    --primary-dim:     rgba(0,0,0,0.07);
+    --color-background: var(--bg);
+    --color-midground:  var(--card);
+    --color-foreground: var(--fg);
+    --color-primary:    var(--primary);
+    --color-border:     var(--border);
+    --color-muted:      var(--fg-muted);
+    --btn-bg:          #18181b;
+    --btn-fg:          #ffffff;
+    --btn-bg-disabled: rgba(0,0,0,0.12);
+    --btn-fg-disabled: rgba(0,0,0,0.3);
+  }
+}
+
+/* ── Reset ────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────── */
+::-webkit-scrollbar            { width: 6px; height: 6px; }
+::-webkit-scrollbar-track      { background: transparent; }
+::-webkit-scrollbar-thumb      { background: rgba(255,255,255,0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,0.2); }
+
+/* ── Focus ring ───────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Spin animation (used by scheduler run button) ─────────────────────── */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.text-muted   { color: var(--fg-muted); }
+.text-primary { color: var(--fg); }
