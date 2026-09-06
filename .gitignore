@@ -1,0 +1,99 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# uv
+.uv/
+uv.lock
+
+# Distribution / packaging
+*.whl
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.coveragerc
+.tox/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+.pyright/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+docs/err/
+
+# Temporary files
+*.tmp
+*.bak
+response.json
+
+# Node.js / frontend
+node_modules/
+tests/e2e/node_modules/
+ui-tui/node_modules/
+web/node_modules/
+
+# Build outputs
+web/dist/
+ui-tui/dist/
+*.tsbuildinfo
+
+# Playwright
+tests/e2e/playwright-report/
+tests/e2e/test-results/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Archives
+*.zip
+gyrfalcon.zip
+docs/spec/hermes/hermes.zip
+
+
+#zip
+*.zip
+
+
+# Markdown (all .md ignored except README.md)
+*.md
+!README.md

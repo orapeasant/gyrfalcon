@@ -16,6 +16,8 @@ from gyrfalcon.plugins import PluginManager
 from gyrfalcon.tools.mcp_tool import initialize_mcp_servers
 from gyrfalcon.telemetry import WebSocketTracer, AgentTracer, trace_span
 from gyrfalcon.gyrfalcon_constants import get_app_name
+from gyrfalcon.tools import registry as _reg
+from gyrfalcon.tools.approval import is_allow_all, needs_approval_for_tool
 
 if TYPE_CHECKING:
     from tui_gateway.transport import BaseTransport
@@ -433,8 +435,6 @@ class TUIGatewayServer:
 
     def _on_tool_progress(self, tool_name: str, args: dict, status: str) -> None:
         logger.debug("Beginning of _on_tool_progress")
-        from gyrfalcon.tools import registry as _reg
-        from gyrfalcon.tools.approval import is_allow_all, needs_approval_for_tool
         if status == "start":
             # Determine if tool is read-only or write
             is_ro = _reg.is_read_only(tool_name)

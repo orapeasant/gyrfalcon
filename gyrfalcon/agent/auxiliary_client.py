@@ -73,6 +73,11 @@ def call_llm(
         "model": model,
         "messages": messages,
     }
+
+    # Copilot rejects calls without its IDE-auth headers ("missing Editor-Version").
+    if base_url and "githubcopilot.com" in base_url:
+        from gyrfalcon.providers.copilot import CopilotProvider
+        kwargs.update(CopilotProvider().build_api_kwargs_extras())
     if temperature is not None:
         kwargs["temperature"] = temperature
     if max_tokens:
@@ -94,6 +99,21 @@ def call_llm(
 def _resolve_credentials(provider: str | None) -> Optional[tuple[str, str, str]]:
     """Resolve base_url, api_key, model for a provider."""
     logger.debug("Beginning of _resolve_credentials")
+    if provider is None:
+        provider = cfg_get("provider.active") or None
+
+    # Copilot is resolved via OAuth rather than an env key, so without this the
+    # whole chain falls through to api.openai.com with a placeholder key.
+    if provider in (None, "copilot"):
+        try:
+            from gyrfalcon.providers.copilot import get_copilot_credentials, is_authenticated
+            if is_authenticated():
+                base_url, api_key = get_copilot_credentials()
+                if api_key:
+                    return base_url, api_key, cfg_get("model.name", "gpt-4o-mini")
+        except Exception as e:
+            logger.debug(f"Copilot credential resolution skipped: {e}")
+
     if provider == "anthropic":
         key = get_env_value("ANTHROPIC_API_KEY")
         if key:

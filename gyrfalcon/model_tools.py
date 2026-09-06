@@ -19,8 +19,52 @@ _schema_cache: dict[tuple, list[dict]] = {}
 _discovered = False
 
 
+def _discover_from_source(tools_dir: Path) -> int:
+    """AST-scan tools/*.py and import only the modules that call registry.register()."""
+    imported = 0
+    for py_file in sorted(tools_dir.glob("*.py")):
+        if py_file.name.startswith("_") or py_file.name == "__init__.py":
+            continue
+        try:
+            tree = ast.parse(py_file.read_text(encoding="utf-8"))
+            has_register = any(
+                isinstance(node, ast.Call)
+                and hasattr(node.func, "attr")
+                and node.func.attr == "register"
+                for node in ast.walk(tree)
+            )
+            if has_register:
+                importlib.import_module(f"gyrfalcon.tools.{py_file.stem}")
+                imported += 1
+        except Exception as e:
+            logger.warning(f"Failed to import {py_file.name}: {e}")
+    return imported
+
+
+def _discover_from_package() -> int:
+    """Import every tool submodule via the import system.
+
+    Required when running from a PyInstaller bundle: the .py sources are inside
+    the archive rather than on disk, so globbing the directory finds nothing and
+    the agent ends up with an empty tool registry.
+    """
+    import pkgutil
+    from gyrfalcon import tools as tools_pkg
+
+    imported = 0
+    for mod in pkgutil.iter_modules(tools_pkg.__path__):
+        if mod.name.startswith("_"):
+            continue
+        try:
+            importlib.import_module(f"gyrfalcon.tools.{mod.name}")
+            imported += 1
+        except Exception as e:
+            logger.warning(f"Failed to import gyrfalcon.tools.{mod.name}: {e}")
+    return imported
+
+
 def discover_builtin_tools(tools_dir: Path | None = None) -> None:
-    """AST-scans tools/*.py for registry.register() calls, imports them."""
+    """Import the built-in tool modules so they self-register."""
     logger.debug("Beginning of discover_builtin_tools")
     global _discovered
     if _discovered:
@@ -29,28 +73,20 @@ def discover_builtin_tools(tools_dir: Path | None = None) -> None:
     if tools_dir is None:
         tools_dir = Path(__file__).parent / "tools"
 
-    if not tools_dir.exists():
-        _discovered = True
-        return
+    # Source checkout: AST-scan so only modules that register are imported.
+    # Frozen bundle: no .py files on disk, so walk the package instead.
+    if tools_dir.exists() and any(tools_dir.glob("*.py")):
+        imported = _discover_from_source(tools_dir)
+    else:
+        imported = _discover_from_package()
 
-    for py_file in sorted(tools_dir.glob("*.py")):
-        if py_file.name.startswith("_") or py_file.name == "__init__.py":
-            continue
-        try:
-            source = py_file.read_text(encoding="utf-8")
-            tree = ast.parse(source)
-            has_register = any(
-                isinstance(node, ast.Call)
-                and hasattr(node.func, "attr")
-                and node.func.attr == "register"
-                for node in ast.walk(tree)
-            )
-            if has_register:
-                module_name = f"gyrfalcon.tools.{py_file.stem}"
-                importlib.import_module(module_name)
-                logger.debug(f"Imported tool module: {module_name}")
-        except Exception as e:
-            logger.warning(f"Failed to import {py_file.name}: {e}")
+    if imported == 0:
+        # An agent with no tools silently degrades into a chat-only assistant that
+        # claims it cannot do things, so make the cause visible.
+        logger.error(
+            "No built-in tool modules were imported — the agent will have no tools. "
+            f"Looked in {tools_dir} (exists={tools_dir.exists()})."
+        )
 
     _discovered = True
 

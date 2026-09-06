@@ -1872,10 +1872,18 @@ async def websocket_gateway(ws: WebSocket):
     transport = WebSocketTransport(ws)
     server = TUIGatewayServer(transport, ws_tracer=ws_tracer)
 
+    # Every frame on this socket goes through the transport's single writer.
+    # Awaiting ws.send_* from more than one task interleaves writes into the
+    # connection's shared permessage-deflate compressor and corrupts the stream.
+    # flush=False is required here: these callers run on the event loop thread,
+    # and blocking for the drain task from inside the loop would deadlock it.
+    def _ws_send(payload: dict) -> None:
+        transport.send(json.dumps(payload), flush=False)
+
     # Send ready event
     skin_data = {"name": "default", "agent_name": get_app_name()}
     with trace_span("ws.send.gateway.ready", {"ws.method": "gateway.ready"}):
-        await ws.send_json({"jsonrpc": "2.0", "method": "gateway.ready", "params": {"skin": skin_data}})
+        _ws_send({"jsonrpc": "2.0", "method": "gateway.ready", "params": {"skin": skin_data}})
     logger.info("Sent gateway.ready to client")
 
     # ── Agent event bus forwarder ────────────────────────────────────────────
@@ -1897,11 +1905,7 @@ async def websocket_gateway(ws: WebSocket):
                 if method == "_agent_done":
                     break
                 try:
-                    await ws.send_json({
-                        "jsonrpc": "2.0",
-                        "method": method,
-                        "params": params,
-                    })
+                    _ws_send({"jsonrpc": "2.0", "method": method, "params": params})
                 except Exception:
                     break
         finally:

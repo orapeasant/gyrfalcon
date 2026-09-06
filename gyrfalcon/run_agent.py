@@ -22,6 +22,33 @@ from gyrfalcon.net import get_openai_client_with_fallback, get_anthropic_client
 
 logger = get_logger("agent")
 
+_TITLE_MAX_CHARS = 80
+_FALLBACK_TITLE = "Untitled session"
+
+
+def _clean_title(raw: str) -> str:
+    """Normalize a model-produced title: strip quoting, punctuation, and newlines."""
+    title = " ".join((raw or "").split())
+    title = title.strip().strip('"').strip("'").rstrip(".").strip()
+    return title[:_TITLE_MAX_CHARS]
+
+
+def derive_fallback_title(user_message: str) -> str:
+    """Build a readable title from the first user message.
+
+    Used as the immediate placeholder so a session is never left untitled, and as
+    the permanent title when the summarizing call is unavailable (no credentials,
+    offline, rate-limited).
+    """
+    text = " ".join((user_message or "").split())
+    if not text:
+        return _FALLBACK_TITLE
+    if len(text) <= 60:
+        return text[:_TITLE_MAX_CHARS]
+    # Cut at the last word boundary so the title doesn't end mid-word.
+    clipped = text[:60].rsplit(" ", 1)[0] or text[:60]
+    return f"{clipped}…"[:_TITLE_MAX_CHARS]
+
 
 class IterationBudget:
     """Thread-safe iteration counter shared between parent and subagents."""
@@ -211,17 +238,26 @@ class AIAgent:
         logger.debug("End of _get_client")
         return self._client
 
-    def _maybe_generate_title(self, user_message: str, assistant_response: str) -> None:
-        """Generate a concise session title from the first exchange and persist it.
+    def _ensure_session_title(self, user_message: str, assistant_response: str) -> None:
+        """Guarantee the session has a title, then refine it with the LLM.
 
-        Uses a fast LLM call with a tight prompt. Runs in a background thread
-        so it never blocks the main conversation response.
+        A placeholder derived from the first user message is written synchronously
+        so the title is never empty — the LLM call can fail, return nothing, or be
+        cut short when a short-lived process exits, and previously each of those
+        left the title NULL forever.
         """
         import threading
 
         existing = self.session_db.get_session(self.session_id)  # type: ignore[union-attr]
         if existing and existing.get("title"):
-            return  # already has a title — skip
+            return  # already titled — nothing to do
+
+        fallback = derive_fallback_title(user_message)
+        try:
+            self.session_db.update_session_title(self.session_id, fallback)  # type: ignore[union-attr]
+        except Exception as e:
+            logger.warning(f"Could not write fallback session title: {e}")
+            return
 
         def _run() -> None:
             try:
@@ -235,18 +271,21 @@ class AIAgent:
                 resp = client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=20,
+                    max_tokens=64,
                     temperature=0.3,
                 )
-                title = resp.choices[0].message.content or ""
-                title = title.strip().strip('"').strip("'").rstrip(".").strip()[:80]
+                title = _clean_title(resp.choices[0].message.content or "")
                 if title:
                     self.session_db.update_session_title(self.session_id, title)  # type: ignore[union-attr]
                     logger.info(f"Session title set: {title!r}")
+                else:
+                    logger.warning("Title generation returned empty; keeping fallback title")
             except Exception as e:
-                logger.debug(f"Title generation skipped: {e}")
+                # Never fatal — the fallback title is already persisted.
+                logger.warning(f"Title generation failed, keeping fallback: {e}")
 
-        threading.Thread(target=_run, daemon=True, name="title-gen").start()
+        # Not a daemon: a one-shot CLI or scheduler run must not exit mid-write.
+        threading.Thread(target=_run, daemon=False, name="title-gen").start()
 
     def chat(self, message: str) -> str:
         """Simple interface — returns final response string."""
@@ -324,14 +363,11 @@ class AIAgent:
         self._budget.reset()
         result = self._run_loop(tools, task_id)
 
-        # Generate session title after first turn (when title is still unset)
-        if (
-            self.session_db
-            and self.session_id
-            and result.get("final_response")
-            and len(self._conversation_history) <= 3   # only on turn 1 (user + assistant ≤ 3 msgs)
-        ):
-            self._maybe_generate_title(user_message, result["final_response"])
+        # Title any session that still lacks one. Not gated on history length:
+        # a first turn that used tools already exceeds it, which is exactly the
+        # case that was silently never titled.
+        if self.session_db and self.session_id and result.get("final_response"):
+            self._ensure_session_title(user_message, result["final_response"])
 
         # Sync memory
         if not self.skip_memory and result.get("final_response"):

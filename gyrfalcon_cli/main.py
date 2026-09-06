@@ -11,21 +11,35 @@ logger = get_logger("main")
 
 
 
+SUBCOMMANDS = frozenset({
+    "chat", "setup", "auth", "doctor", "version", "gateway", "scheduler", "cron",
+    "skills", "tools", "dashboard", "logs", "models",
+})
+
+
 def _apply_profile_override():
-    """Pre-parses --profile/-p BEFORE module imports. Sets GYRFALCON_HOME env var."""
+    """Pre-parses --profile/-p BEFORE module imports. Sets GYRFALCON_HOME env var.
+
+    Only scans the global flags ahead of the subcommand. Subcommands reuse these
+    short flags for their own options (`scheduler add -p "<prompt>"`), and reading
+    one as a profile name silently redirects the whole home directory.
+    """
     logger.debug("Beginning of _apply_profile_override")
+    from pathlib import Path
+
+    def _set(profile_name: str) -> None:
+        os.environ["GYRFALCON_HOME"] = str(
+            Path.home() / ".gyrfalcon-profiles" / profile_name
+        )
+
     for i, arg in enumerate(sys.argv[1:], 1):
+        if arg in SUBCOMMANDS:
+            break  # everything after this belongs to the subcommand
         if arg in ("--profile", "-p") and i < len(sys.argv) - 1:
-            profile_name = sys.argv[i + 1]
-            from pathlib import Path
-            profile_home = Path.home() / ".gyrfalcon-profiles" / profile_name
-            os.environ["GYRFALCON_HOME"] = str(profile_home)
+            _set(sys.argv[i + 1])
             break
         elif arg.startswith("--profile="):
-            profile_name = arg.split("=", 1)[1]
-            from pathlib import Path
-            profile_home = Path.home() / ".gyrfalcon-profiles" / profile_name
-            os.environ["GYRFALCON_HOME"] = str(profile_home)
+            _set(arg.split("=", 1)[1])
             break
 
 
@@ -70,7 +84,10 @@ def main():
     subparsers.add_parser("version", help="Print version")
     subparsers.add_parser("gateway", help="Gateway daemon management")
     sub_sched = subparsers.add_parser("scheduler", aliases=["cron"], help="Scheduler management")
-    sub_sched.add_argument("scheduler_args", nargs="*", help="list | add | remove | pause | resume")
+    # REMAINDER so the subcommand's own flags (-s, -p, --skill) reach it verbatim
+    # instead of being claimed by the top-level parser.
+    sub_sched.add_argument("scheduler_args", nargs=argparse.REMAINDER,
+                           help="list | add | remove | pause | resume")
     subparsers.add_parser("skills", help="Skill management")
     subparsers.add_parser("tools", help="Tool configuration")
     subparsers.add_parser("dashboard", help="Launch web dashboard")
@@ -87,6 +104,13 @@ def main():
     # Setup logging
     from gyrfalcon.gyrfalcon_logging import setup_logging
     setup_logging(verbose=args.verbose)
+
+    # Populate sys.modules on the main thread. In a frozen build, lazy imports
+    # firing from worker threads race on PyInstaller's shared archive handle.
+    from gyrfalcon.gyrfalcon_constants import warm_imports
+    warmed = warm_imports()
+    if warmed:
+        logger.info(f"Pre-imported {warmed} modules for thread-safe frozen imports")
 
     # Dispatch
     if args.command == "version":

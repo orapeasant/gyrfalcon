@@ -35,6 +35,53 @@ def get_app_name() -> str:
     return os.environ.get("GYRFALCON_APP_NAME", DEFAULT_APP_NAME)
 
 
+def is_frozen() -> bool:
+    """True when running from a PyInstaller bundle."""
+    import sys
+    return bool(getattr(sys, "frozen", False))
+
+
+def warm_imports() -> int:
+    """Import our modules up front so worker threads never load them lazily.
+
+    PyInstaller serves not-yet-imported modules from a single shared archive
+    handle, and Python takes per-module import locks, so two threads importing
+    different modules can seek over each other mid-read. The bytes returned are
+    then not a valid zlib stream and the import dies with
+    "Error -3 while decompressing data: incorrect header check".
+
+    Importing on the main thread before any worker starts makes every later
+    import a sys.modules hit, which never touches the archive. Only needed when
+    frozen; a source checkout reads plain files and is unaffected.
+    """
+    if not is_frozen():
+        return 0
+
+    import importlib
+    import pkgutil
+    import sys
+
+    warmed = 0
+    for root in ("gyrfalcon", "gyrfalcon_cli", "tui_gateway"):
+        try:
+            pkg = importlib.import_module(root)
+        except Exception:
+            continue
+        if not hasattr(pkg, "__path__"):
+            continue
+        for mod in pkgutil.walk_packages(pkg.__path__, prefix=f"{root}."):
+            if mod.name in sys.modules:
+                continue
+            try:
+                importlib.import_module(mod.name)
+                warmed += 1
+            except Exception:
+                # Optional backends (boto3, playwright, ...) may be absent; the
+                # point is only to populate what is present.
+                pass
+    return warmed
+
+
 def get_org_name() -> str:
     """Organization shown under the user name — GYRFALCON_ORG_NAME in the root .env file.
 

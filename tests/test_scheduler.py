@@ -774,3 +774,38 @@ class TestSchedulerToolReporting:
                 # Parses as ISO and is now due, so the scheduler will pick it up.
                 assert datetime.fromisoformat(job["next_run_at"])
                 assert job_id in [j["id"] for j in store.get_due_jobs()]
+
+
+class TestProfileFlagScoping:
+    """`-p` after a subcommand is that subcommand's flag, not --profile.
+
+    Regression: `scheduler add -p "<prompt>"` was read as `--profile <prompt>`,
+    silently redirecting GYRFALCON_HOME and filing jobs under a bogus profile.
+    """
+
+    def _home_after(self, argv):
+        import sys as _sys
+        from gyrfalcon_cli.main import _apply_profile_override
+
+        with patch.object(_sys, "argv", argv), \
+             patch.dict("os.environ", {}, clear=False) as env:
+            env.pop("GYRFALCON_HOME", None)
+            _apply_profile_override()
+            return env.get("GYRFALCON_HOME")
+
+    def test_prompt_flag_is_not_a_profile(self):
+        assert self._home_after(
+            ["gyrfalcon", "scheduler", "add", "-s", "1h", "-p", "ping"]
+        ) is None
+
+    def test_global_profile_flag_still_applies(self):
+        home = self._home_after(["gyrfalcon", "--profile", "work", "scheduler", "list"])
+        assert home is not None and home.endswith("/.gyrfalcon-profiles/work")
+
+    def test_short_global_profile_flag_still_applies(self):
+        home = self._home_after(["gyrfalcon", "-p", "work", "chat"])
+        assert home is not None and home.endswith("/.gyrfalcon-profiles/work")
+
+    def test_equals_form_still_applies(self):
+        home = self._home_after(["gyrfalcon", "--profile=work", "scheduler", "list"])
+        assert home is not None and home.endswith("/.gyrfalcon-profiles/work")

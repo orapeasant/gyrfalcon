@@ -1,10 +1,11 @@
 """System prompt assembly — stateless functions."""
 
+import functools
 import os
 import platform
 import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from gyrfalcon.gyrfalcon_constants import get_gyrfalcon_home, get_skills_dir, get_app_name
 from gyrfalcon.gyrfalcon_logging import get_logger
@@ -31,6 +32,16 @@ When the user references past interactions — such as asking about previous que
 - "remind me what you said about X" → use session_search with action=search, query="X", role_filter=assistant
 
 Never say you don't have access to past conversations. The session database stores all prior chat history locally.
+
+## Handling Tool Failures
+
+When a tool call fails, report what actually happened. Do not turn a failure into a claim that you lack the capability.
+
+- Show the real error text from the tool, not a paraphrase of it. The exact message is usually what tells the user how to fix it.
+- Say which command or tool produced it, so the user can reproduce it themselves.
+- If the fix requires something you cannot do — an interactive login, a browser prompt, a credential only the user holds, elevated permissions — give them the exact command to run. That workaround is a useful answer, not a fallback.
+- Distinguish "this failed for reason X" from "I am unable to do this". Auth errors, expired tokens, missing config, and permission denials are all results worth reporting, not reasons to refuse.
+- Never silently swallow a failed tool call or present a partial result as if it succeeded.
 """
 
 
@@ -154,7 +165,45 @@ def load_soul_md() -> Optional[str]:
 
 # Capabilities a user asks for by name, where the tool schema alone does not make
 # the connection obvious. Keyed by tool name; only rendered when that tool is enabled.
-_CAPABILITY_NOTES: dict[str, str] = {
+# CLIs worth naming explicitly when installed. The model reads "shell access" as
+# generic and concludes it has no way to reach a specific service, so the ones
+# actually present on this machine are listed by name.
+_NOTABLE_CLIS: tuple[str, ...] = (
+    "aws", "az", "gcloud", "kubectl", "docker", "gh", "git",
+    "terraform", "psql", "mysql", "sqlite3", "curl", "jq",
+)
+
+
+@functools.lru_cache(maxsize=1)
+def detect_available_clis() -> tuple[str, ...]:
+    """Which notable CLIs are on PATH. Cached — PATH does not change mid-process."""
+    import shutil
+    return tuple(name for name in _NOTABLE_CLIS if shutil.which(name))
+
+
+def _terminal_capability_note() -> str | None:
+    """Tell the agent which real CLIs the shell can reach.
+
+    Grounded in what is actually installed so the agent neither refuses work it
+    can do nor claims a CLI this machine does not have.
+    """
+    clis = detect_available_clis()
+    if not clis:
+        return None
+    return (
+        "### Shell and command-line tools\n"
+        "The `terminal` tool runs real shell commands on this machine, so any installed "
+        "CLI is available to you. Detected on PATH: "
+        + ", ".join(f"`{c}`" for c in clis) + ".\n"
+        "- Never say you lack a way to reach a service before checking whether its CLI "
+        "is available here — e.g. query AWS with `aws ...`, Azure with `az ...`.\n"
+        "- Authentication uses whatever credentials are already configured on this "
+        "machine. If a command fails on auth or permissions, report the actual error "
+        "rather than concluding you have no access."
+    )
+
+
+_CAPABILITY_NOTES: dict[str, Any] = {
     "scheduler": (
         "### Scheduling\n"
         "You can create and manage scheduled jobs yourself with the `scheduler` tool — "
@@ -165,6 +214,7 @@ _CAPABILITY_NOTES: dict[str, str] = {
         "- Jobs only fire while the gateway is running. The tool reports this back — "
         "if `will_fire` is false, say so and tell the user to start it with `gyrfalcon gateway`."
     ),
+    "terminal": _terminal_capability_note,
 }
 
 
@@ -179,7 +229,13 @@ def build_capabilities_prompt(enabled_tools: set[str] | None = None) -> str:
         from gyrfalcon.toolsets import _GYRFALCON_CORE_TOOLS
         enabled_tools = set(_GYRFALCON_CORE_TOOLS)
 
-    notes = [note for tool, note in _CAPABILITY_NOTES.items() if tool in enabled_tools]
+    notes = []
+    for tool, note in _CAPABILITY_NOTES.items():
+        if tool not in enabled_tools:
+            continue
+        text = note() if callable(note) else note
+        if text:
+            notes.append(text)
     if not notes:
         return ""
     return "## Capabilities\n\n" + "\n\n".join(notes)

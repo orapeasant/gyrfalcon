@@ -993,10 +993,14 @@ export function ChatPage() {
           disabled={connectionState !== "connected" || isThinking || !input.trim()}
           style={{
             padding: "0 1.5rem",
+            // Must track the theme: --fg is near-white in dark mode, so a
+            // hardcoded white label rendered invisible against it.
             background: connectionState === "connected" && !isThinking && input.trim()
-              ? "var(--fg)"
-              : "var(--color-muted)",
-            color: "white",
+              ? "var(--btn-bg)"
+              : "var(--btn-bg-disabled)",
+            color: connectionState === "connected" && !isThinking && input.trim()
+              ? "var(--btn-fg)"
+              : "var(--btn-fg-disabled)",
             border: "none",
             borderRadius: "8px",
             cursor: connectionState === "connected" && !isThinking && input.trim()
