@@ -5,7 +5,6 @@ bundle those sources live in the archive, so the glob found nothing, the registr
 stayed empty, and the agent reported "only the `memory` tool is exposed to me".
 """
 
-from pathlib import Path
 
 import pytest
 

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     source TEXT,
     user_id TEXT,
+    agent_id TEXT,
     model TEXT,
     parent_session_id TEXT,
     title TEXT,
@@ -127,6 +128,21 @@ class SessionDB:
             self._conn.executescript(_FTS_SQL)
         except sqlite3.OperationalError:
             pass  # FTS5 not available
+        try:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN agent_id TEXT")
+        except sqlite3.OperationalError:
+            pass  # already has the column
+        # Sessions predate identity, so every existing row has user_id NULL —
+        # the column was written as None and never read (§17.1). Claim them
+        # for the single-user `local` principal so the same filter applies to
+        # old and new rows alike, instead of NULL meaning "visible to nobody".
+        self._conn.execute(
+            "UPDATE sessions SET user_id = 'local' WHERE user_id IS NULL"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_user "
+            "ON sessions(user_id, last_active DESC)"
+        )
         self._conn.commit()
 
     @property
@@ -144,6 +160,37 @@ class SessionDB:
             except sqlite3.OperationalError:
                 pass
 
+    @staticmethod
+    def _owner(user_id: str | None = None) -> str:
+        """Whose sessions we are talking about (§17.11 step 4).
+
+        Defaults to the current principal, which is `local` on a single-user
+        install — so the filter is always present and always correct rather
+        than being applied only when someone remembers to pass an id.
+        """
+        if user_id is not None:
+            return user_id
+        from gyrfalcon.identity import require_principal
+
+        return require_principal().user_id
+
+    @staticmethod
+    def _visible(user_id: str | None) -> tuple[str, tuple]:
+        """(clause, params) restricting a query to one user's sessions.
+
+        An operator sees the whole install; §17.6 keeps "may I see it" and
+        "may I act on it" as separate questions, and listing sessions is the
+        former.
+        """
+        from gyrfalcon.identity import require_principal
+
+        if user_id is None:
+            who = require_principal()
+            if who.is_operator:
+                return "", ()
+            return "user_id = ?", (who.user_id,)
+        return "user_id = ?", (user_id,)
+
     def create_session(
         self,
         session_id: str | None = None,
@@ -153,6 +200,7 @@ class SessionDB:
         user_id: str | None = None,
         parent_session_id: str | None = None,
         title: str | None = None,
+        agent_id: str | None = None,
     ) -> str:
         logger.debug("Beginning of create_session")
         if session_id is None:
@@ -160,10 +208,11 @@ class SessionDB:
         now = time.time()
         _retry_execute(
             self.conn,
-            """INSERT INTO sessions (id, source, user_id, model, parent_session_id, title,
+            """INSERT INTO sessions (id, source, user_id, agent_id, model, parent_session_id, title,
                system_prompt, started_at, last_active)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (session_id, source, user_id, model, parent_session_id, title, system_prompt, now, now),
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (session_id, source, self._owner(user_id), agent_id, model, parent_session_id,
+             title, system_prompt, now, now),
         )
         self.conn.commit()
         self._maybe_checkpoint()
@@ -181,7 +230,13 @@ class SessionDB:
         self.conn.commit()
         self._maybe_checkpoint()
 
-    def delete_session(self, session_id: str) -> None:
+    def delete_session(self, session_id: str, user_id: str | None = None) -> None:
+        """Deleting is acting, not seeing: refuse anything not visible."""
+        if self.get_session(session_id, user_id) is None:
+            return
+        self._delete_session_unchecked(session_id)
+
+    def _delete_session_unchecked(self, session_id: str) -> None:
         logger.debug("Beginning of delete_session")
         _retry_execute(self.conn, "DELETE FROM messages WHERE session_id = ?", (session_id,))
         _retry_execute(self.conn, "DELETE FROM sessions WHERE id = ?", (session_id,))
@@ -216,8 +271,18 @@ class SessionDB:
         self.conn.commit()
         self._maybe_checkpoint()
 
-    def get_messages(self, session_id: str) -> list[dict]:
+    def get_messages(self, session_id: str, user_id: str | None = None) -> list[dict]:
+        """Messages of a session the caller may see.
+
+        Visibility follows the session, checked here rather than left to each
+        caller: this returns the full text of someone's conversation, and it
+        was the one read on this class with no ownership filter at all — so
+        anyone who knew a session id could read another tenant's messages,
+        including through `GET /api/sessions/{id}/messages`.
+        """
         logger.debug("Beginning of get_messages")
+        if self.get_session(session_id, user_id) is None:
+            return []
         cursor = _retry_execute(
             self.conn,
             "SELECT * FROM messages WHERE session_id = ? ORDER BY id",
@@ -226,10 +291,11 @@ class SessionDB:
         rows = cursor.fetchall() if cursor else []
         return [dict(row) for row in rows]
 
-    def get_messages_as_conversation(self, session_id: str) -> list[dict]:
+    def get_messages_as_conversation(self, session_id: str,
+                                     user_id: str | None = None) -> list[dict]:
         """Get messages in OpenAI conversation format."""
         logger.debug("Beginning of get_messages_as_conversation")
-        messages = self.get_messages(session_id)
+        messages = self.get_messages(session_id, user_id)
         result = []
         for msg in messages:
             entry: dict[str, Any] = {"role": msg["role"]}
@@ -244,59 +310,71 @@ class SessionDB:
             result.append(entry)
         return result
 
-    def get_session(self, session_id: str) -> Optional[dict]:
+    def get_session(self, session_id: str, user_id: str | None = None) -> Optional[dict]:
         logger.debug("Beginning of get_session")
+        clause, params = self._visible(user_id)
+        where = f"WHERE id = ? AND {clause}" if clause else "WHERE id = ?"
         cursor = _retry_execute(
-            self.conn, "SELECT * FROM sessions WHERE id = ?", (session_id,)
+            self.conn, f"SELECT * FROM sessions {where}", (session_id, *params)
         )
         row = cursor.fetchone() if cursor else None
         return dict(row) if row else None
 
     def list_sessions(
-        self, limit: int = 50, offset: int = 0, source: str | None = None
+        self, limit: int = 50, offset: int = 0, source: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict]:
         logger.debug("Beginning of list_sessions")
-        if source:
-            cursor = _retry_execute(
-                self.conn,
-                "SELECT * FROM sessions WHERE source = ? ORDER BY last_active DESC LIMIT ? OFFSET ?",
-                (source, limit, offset),
-            )
-        else:
-            cursor = _retry_execute(
-                self.conn,
-                "SELECT * FROM sessions ORDER BY last_active DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            )
+        clause, params = self._visible(user_id)
+        clauses = [c for c in (clause, "source = ?" if source else "") if c]
+        values = [*params] + ([source] if source else [])
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        cursor = _retry_execute(
+            self.conn,
+            f"SELECT * FROM sessions {where} ORDER BY last_active DESC LIMIT ? OFFSET ?",
+            (*values, limit, offset),
+        )
         rows = cursor.fetchall() if cursor else []
         return [dict(row) for row in rows]
 
-    def search_messages(self, query: str, limit: int = 10) -> list[dict]:
-        """Full-text search across messages."""
+    def search_messages(self, query: str, limit: int = 10,
+                        user_id: str | None = None) -> list[dict]:
+        """Full-text search across messages.
+
+        Scoped through the joined session: message text is the most sensitive
+        thing in this database, so an unfiltered FTS query would be the widest
+        possible leak.
+        """
         logger.debug("Beginning of search_messages")
+        clause, params = self._visible(user_id)
+        extra = f" AND s.{clause}" if clause else ""
         try:
             cursor = _retry_execute(
                 self.conn,
-                """SELECT m.*, s.title as session_title
+                f"""SELECT m.*, s.title as session_title
                    FROM messages_fts fts
                    JOIN messages m ON m.id = fts.rowid
                    JOIN sessions s ON s.id = m.session_id
-                   WHERE messages_fts MATCH ?
+                   WHERE messages_fts MATCH ?{extra}
                    ORDER BY rank LIMIT ?""",
-                (query, limit),
+                (query, *params, limit),
             )
             rows = cursor.fetchall() if cursor else []
             return [dict(row) for row in rows]
         except sqlite3.OperationalError:
             return []
 
-    def search_sessions(self, query: str, limit: int = 10) -> list[dict]:
+    def search_sessions(self, query: str, limit: int = 10,
+                        user_id: str | None = None) -> list[dict]:
         """Search sessions by title."""
         logger.debug("Beginning of search_sessions")
+        clause, params = self._visible(user_id)
+        extra = f" AND {clause}" if clause else ""
         cursor = _retry_execute(
             self.conn,
-            "SELECT * FROM sessions WHERE title LIKE ? ORDER BY last_active DESC LIMIT ?",
-            (f"%{query}%", limit),
+            f"SELECT * FROM sessions WHERE title LIKE ?{extra} "
+            f"ORDER BY last_active DESC LIMIT ?",
+            (f"%{query}%", *params, limit),
         )
         rows = cursor.fetchall() if cursor else []
         return [dict(row) for row in rows]

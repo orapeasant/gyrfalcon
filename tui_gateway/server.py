@@ -11,7 +11,7 @@ from typing import Any, Callable, Optional, TYPE_CHECKING
 from gyrfalcon.gyrfalcon_logging import get_logger, set_session_tag
 from gyrfalcon.gyrfalcon_state import SessionDB
 from gyrfalcon.run_agent import AIAgent
-from gyrfalcon.config import load_config, cfg_get
+from gyrfalcon.config import load_config, cfg_get, cfg_set
 from gyrfalcon.plugins import PluginManager
 from gyrfalcon.tools.mcp_tool import initialize_mcp_servers
 from gyrfalcon.telemetry import WebSocketTracer, AgentTracer, trace_span
@@ -37,6 +37,12 @@ class TUIGatewayServer:
         self._busy_lock = threading.Lock()
         self._plugin_manager = PluginManager()
         self._plugin_manager.discover_and_load()
+
+        # User flow files (~/.gyrfalcon/flows/) — a separate, manifest-free
+        # mechanism from plugins; see gyrfalcon/flow/registry.py.
+        from gyrfalcon.flow.registry import discover_flows
+        discover_flows()
+
         self._ws_tracer = ws_tracer or WebSocketTracer()
         self._agent_tracer: Optional[AgentTracer] = None
         initialize_mcp_servers()
@@ -355,27 +361,35 @@ class TUIGatewayServer:
             self._emit_event("status.update", {"state": "idle"})
 
     def _get_or_create_agent(self) -> AIAgent:
-        """Get existing agent or create new one."""
+        """Get existing agent or create new one.
+
+        If this session was started by a saved Agent (dashboard "Run agent"),
+        rebuild the AIAgent from that same config on every turn — including
+        the reply after a clarifying question — instead of falling back to a
+        generic chat agent. Without this, an Agent's instructions/skills/
+        toolsets/model only applied to its first turn; see gyrfalcon/agents.py.
+        """
         logger.debug("Beginning of _get_or_create_agent")
         if self._agent:
             return self._agent
 
-        config = load_config()
-        model = config.get("model", {}).get("name", "")
-        provider_name = cfg_get("provider.active", "copilot")
-
-        base_url, api_key, provider = self._resolve_credentials(provider_name)
-
-        if not model:
-            from gyrfalcon.providers import get_provider_profile
-            prof = get_provider_profile(provider_name)
-            model = (prof.default_model if prof and prof.default_model else None) or "gpt-4o"
+        agent_kwargs = self._agent_kwargs_for_session()
+        if agent_kwargs is None:
+            config = load_config()
+            model = config.get("model", {}).get("name", "")
+            provider_name = cfg_get("provider.active", "copilot")
+            base_url, api_key, provider = self._resolve_credentials(provider_name)
+            if not model:
+                from gyrfalcon.providers import get_provider_profile
+                prof = get_provider_profile(provider_name)
+                model = (prof.default_model if prof and prof.default_model else None) or "gpt-4o"
+            agent_kwargs = {
+                "base_url": base_url, "api_key": api_key,
+                "model": model, "provider": provider,
+            }
 
         self._agent = AIAgent(
-            base_url=base_url,
-            api_key=api_key,
-            model=model,
-            provider=provider,
+            **agent_kwargs,
             session_id=self._session_id,
             session_db=self._session_db,
             stream_delta_callback=self._on_stream_delta,
@@ -385,6 +399,21 @@ class TUIGatewayServer:
         )
         self._session_id = self._agent.session_id
         return self._agent
+
+    def _agent_kwargs_for_session(self) -> Optional[dict]:
+        """AIAgent kwargs from the saved Agent config that started this session, if any."""
+        if not self._session_id:
+            return None
+        session = self._session_db.get_session(self._session_id)
+        agent_id = session.get("agent_id") if session else None
+        if not agent_id:
+            return None
+        from gyrfalcon.agents import get_agent, build_agent_kwargs
+        agent_cfg = get_agent(agent_id)
+        if not agent_cfg:
+            logger.warning(f"Session {self._session_id} references missing agent {agent_id}")
+            return None
+        return build_agent_kwargs(agent_cfg)
 
     def _resolve_credentials(self, provider_name: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Resolve (base_url, api_key, provider_tag) for a given provider name."""

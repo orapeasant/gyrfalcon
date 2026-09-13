@@ -12,12 +12,41 @@ import os
 if os.path.isdir(web_dist):
     datas.append((web_dist, "web/dist"))
 
+# Stdlib modules that nothing in gyrfalcon imports statically, so PyInstaller's
+# analysis never sees them — but user-authored files loaded at *runtime* from
+# ~/.gyrfalcon/flows/ and ~/.gyrfalcon/skills/scripts/ commonly do. Without
+# these, such a file dies on ModuleNotFoundError inside the frozen binary and
+# `discover_flows()` silently skips it: the flow just never appears in the
+# dashboard, while the same file works fine when run from source.
+user_code_stdlib = [
+    "imaplib",
+    "poplib",
+    "smtplib",
+    "email",
+    "mailbox",
+    "csv",
+    "sqlite3",
+    "xml.etree.ElementTree",
+    "zipfile",
+    "tarfile",
+    "hashlib",
+    "hmac",
+    "uuid",
+    "textwrap",
+    "difflib",
+    "statistics",
+    "decimal",
+    "ipaddress",
+]
+
 hiddenimports = (
     collect_submodules("gyrfalcon.plugins")
     + collect_submodules("gyrfalcon.providers")
     + collect_submodules("gyrfalcon.tools")
     + collect_submodules("gyrfalcon.gateway")
+    + collect_submodules("gyrfalcon.flow")
     + collect_submodules("uvicorn")
+    + user_code_stdlib
 )
 
 a = Analysis(

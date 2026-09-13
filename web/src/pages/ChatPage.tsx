@@ -5,11 +5,73 @@ import { APP_NAME } from "../lib/constants";
 import { Markdown } from "../components/Markdown";
 import { SlashMenu, useSlashQuery } from "../components/SlashMenu";
 
+interface ToolCall {
+  name: string;
+  detail: string;
+  read_only: boolean;
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  tools?: ToolCall[];
+}
+
+/** The one argument worth showing next to a tool name.
+ *
+ * The badge used to read "✏️ write · terminal", which says a command ran but
+ * not which one. The backend already publishes `args` on `tool.start`; this
+ * picks the argument that identifies the call and keeps it to one line. */
+function summarizeToolArgs(name: string, args: any): string {
+  if (!args || typeof args !== "object") return "";
+  const pick = (...keys: string[]) => {
+    for (const k of keys) {
+      const v = args[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    return "";
+  };
+  let detail =
+    pick("command", "file_path", "path", "query", "pattern", "url", "name", "prompt", "message");
+  if (!detail) {
+    // Unknown tool: fall back to the first string argument it was given.
+    const first = Object.values(args).find(v => typeof v === "string" && v.trim());
+    detail = typeof first === "string" ? first.trim() : "";
+  }
+  if (name === "search_files" && args.path) detail = `${detail} in ${args.path}`;
+  detail = detail.replace(/\s+/g, " ");
+  return detail.length > 160 ? `${detail.slice(0, 159)}…` : detail;
+}
+
+/** One tool call, rendered as a read/write pill plus its identifying argument. */
+function ToolChip({ tool }: { tool: ToolCall }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "baseline", gap: "6px", maxWidth: "100%" }}>
+      <span style={{
+        display: "inline-flex", alignItems: "center", gap: "4px",
+        padding: "2px 8px", borderRadius: "10px",
+        fontSize: "0.78rem", fontWeight: 600, fontFamily: "monospace", flexShrink: 0,
+        background: tool.read_only ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
+        border: `1px solid ${tool.read_only ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
+        color: tool.read_only ? "#22c55e" : "#ef4444",
+      }}>
+        {tool.read_only ? "👁 read" : "✏️ write"}{" · "}{tool.name}
+      </span>
+      {tool.detail && (
+        <code
+          title={tool.detail}
+          style={{
+            fontSize: "0.76rem", fontFamily: "monospace",
+            color: "var(--color-muted)", overflowWrap: "anywhere",
+          }}
+        >
+          {tool.detail}
+        </code>
+      )}
+    </span>
+  );
 }
 
 interface LogEntry {
@@ -153,7 +215,12 @@ export function ChatPage() {
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [resumedSessionId, setResumedSessionId] = useState<string | null>(null);
   const [resumedTitle, setResumedTitle] = useState<string>("");
-  const [activeTool, setActiveTool] = useState<{ name: string; read_only: boolean; write: boolean } | null>(null);
+  const [activeTool, setActiveTool] = useState<ToolCall | null>(null);
+  // Tools used in the current turn. Kept in a ref as well as state because
+  // message.complete has to read the final list from the same tick that the
+  // last tool.complete was handled in.
+  const turnToolsRef = useRef<ToolCall[]>([]);
+  const [turnTools, setTurnTools] = useState<ToolCall[]>([]);
   const [streamingEnabled, setStreamingEnabled] = useState<boolean>(() => {
     try { return localStorage.getItem("gyrfalcon_streaming") !== "false"; } catch { return true; }
   });
@@ -420,6 +487,10 @@ export function ChatPage() {
         setIsStreaming(false);
         const finalContent = streamingContentRef.current || params.content || "";
         chatLogger.info("Message complete", { responseLength: finalContent.length });
+        // React defers this updater callback to flush time, by which point
+        // the ref reset below has already run — read it into a local first,
+        // or the message is pushed with an already-emptied tools array.
+        const completedTools = turnToolsRef.current;
         setMessages((prev) => [
           ...prev,
           {
@@ -427,8 +498,14 @@ export function ChatPage() {
             role: "assistant",
             content: finalContent,
             timestamp: Date.now(),
+            // Keep the turn's tool calls with the reply they produced, so the
+            // transcript still shows what ran after the live badge is gone.
+            tools: completedTools.length ? completedTools : undefined,
           },
         ]);
+        turnToolsRef.current = [];
+        setTurnTools([]);
+        setActiveTool(null);
         streamingContentRef.current = "";
         setStreamingContent("");
         break;
@@ -442,14 +519,18 @@ export function ChatPage() {
         }
         break;
         
-      case "tool.start":
-        setActiveTool({
+      case "tool.start": {
+        const call: ToolCall = {
           name: params.name || "",
+          detail: summarizeToolArgs(params.name || "", params.args),
           read_only: !!params.read_only,
-          write: !!params.write,
-        });
+        };
+        setActiveTool(call);
+        turnToolsRef.current = [...turnToolsRef.current, call];
+        setTurnTools(turnToolsRef.current);
         break;
-        
+      }
+
       case "tool.complete":
         setActiveTool(null);
         break;
@@ -489,6 +570,9 @@ export function ChatPage() {
     setInput("");
     setIsThinking(true);
     setIsStreaming(false);
+    turnToolsRef.current = [];
+    setTurnTools([]);
+    setActiveTool(null);
     streamingContentRef.current = "";
     setStreamingContent("");
 
@@ -889,6 +973,16 @@ export function ChatPage() {
               }}>
                 {msg.role === "user" ? "You" : APP_NAME}
               </div>
+              {msg.tools && msg.tools.length > 0 && (
+                <div style={{
+                  display: "flex", flexDirection: "column", gap: "4px",
+                  marginBottom: "0.5rem",
+                }}>
+                  {msg.tools.map((t, i) => (
+                    <ToolChip key={`${msg.id}-${t.name}-${i}`} tool={t} />
+                  ))}
+                </div>
+              )}
               {msg.role === "user" ? (
                 <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
               ) : (
@@ -921,29 +1015,26 @@ export function ChatPage() {
               }}>
                 {APP_NAME}
               </div>
+              {/* Tools stay visible while the reply streams — previously the
+                  badge was replaced by the first token of text. */}
+              {turnTools.length > 0 && (
+                <div style={{
+                  display: "flex", flexDirection: "column", gap: "4px",
+                  marginBottom: streamingContent ? "0.5rem" : 0,
+                }}>
+                  {turnTools.map((t, i) => (
+                    <ToolChip key={`${t.name}-${i}`} tool={t} />
+                  ))}
+                </div>
+              )}
               {streamingContent ? (
                 <Markdown content={streamingContent} />
               ) : (
-                <span style={{ color: "var(--color-muted)", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "8px" }}>
-                  {activeTool ? (
-                    <>
-                      <span style={{
-                        display: "inline-flex", alignItems: "center", gap: "4px",
-                        padding: "2px 8px",
-                        borderRadius: "10px", fontSize: "0.78rem", fontWeight: 600,
-                        fontFamily: "monospace",
-                        background: activeTool.read_only ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
-                        border: `1px solid ${activeTool.read_only ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
-                        color: activeTool.read_only ? "#22c55e" : "#ef4444",
-                      }}>
-                        {activeTool.read_only ? "👁 read" : "✏️ write"}
-                        {" · "}{activeTool.name}
-                      </span>
-                    </>
-                  ) : (
-                    "Thinking…"
-                  )}
-                </span>
+                !activeTool && turnTools.length === 0 && (
+                  <span style={{ color: "var(--color-muted)", fontSize: "0.9rem" }}>
+                    Thinking…
+                  </span>
+                )
               )}
             </div>
           </div>

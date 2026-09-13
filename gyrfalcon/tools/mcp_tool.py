@@ -269,8 +269,17 @@ def initialize_mcp_servers() -> None:
             continue
 
         server_type = config.get("type", "stdio")
+        if server_type == "openapi":
+            # Not a persistent connection like stdio: fetch the spec and
+            # register concrete REST-calling tools directly into the global
+            # registry. See openapi_mcp_tool.py for why this exists — the
+            # spec's "resolved at query time" was previously never actually
+            # implemented anywhere.
+            from gyrfalcon.tools.openapi_mcp_tool import register_openapi_server
+            register_openapi_server(server_name, config)
+            continue
         if server_type not in ("stdio", None, ""):
-            # odata and openapi servers are not stdio — skip auto-connect
+            # odata servers are config-only for now — no execution runtime yet.
             logger.debug(f"Skipping non-stdio MCP server: {server_name} (type={server_type})")
             continue
 

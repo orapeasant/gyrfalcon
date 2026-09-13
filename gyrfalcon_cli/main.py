@@ -23,6 +23,13 @@ def _apply_profile_override():
     Only scans the global flags ahead of the subcommand. Subcommands reuse these
     short flags for their own options (`scheduler add -p "<prompt>"`), and reading
     one as a profile name silently redirects the whole home directory.
+
+    Without --profile, GYRFALCON_HOME is defaulted here to ~/.gyrfalcon rather
+    than left unset — get_gyrfalcon_home() falls back to the same path on its
+    own, but only inside this process; a subprocess it spawns (the terminal
+    tool, an MCP server, a plugin's own script) sees an empty env var unless
+    it's actually exported. `setdefault` so an already-exported GYRFALCON_HOME
+    (a wrapper script, a systemd unit) is never overwritten.
     """
     logger.debug("Beginning of _apply_profile_override")
     from pathlib import Path
@@ -41,6 +48,8 @@ def _apply_profile_override():
         elif arg.startswith("--profile="):
             _set(arg.split("=", 1)[1])
             break
+
+    os.environ.setdefault("GYRFALCON_HOME", str(Path.home() / ".gyrfalcon"))
 
 
 def main():

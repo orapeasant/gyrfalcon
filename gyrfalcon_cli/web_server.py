@@ -12,7 +12,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Depends
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from gyrfalcon.gyrfalcon_logging import get_logger
@@ -53,12 +53,86 @@ if _telemetry_enabled:
     instrument_fastapi(app)
 
 
-def _verify_token(request: Request) -> None:
-    """Verify session token from header."""
+def _verify_token(request: Request):
+    """Verify the session token and bind the caller's identity.
+
+    Returns the `Principal`, and binds it for the rest of this request — which
+    is what makes every store call below tenant-scoped without each endpoint
+    having to remember (§17.5).
+
+    Binding without a matching reset is safe here specifically: ASGI runs each
+    request in its own task, and a task gets its own copy of the context, so
+    the set cannot leak into another request. It is done here rather than in
+    middleware because Starlette's BaseHTTPMiddleware runs the endpoint in a
+    *separate* task, and a contextvar set in middleware would not reach it.
+
+    The shared token is still one credential for the whole server: it proves
+    "an operator of this install", not "which person". Real per-user
+    authentication is §17.11 step 8; until then this resolves to the LOCAL
+    principal, which is a real filtered identity rather than a bypass.
+    """
     logger.debug("Beginning of _verify_token")
+    from gyrfalcon import identity
+
+    if identity.identity_enabled():
+        # Per-user credentials only: a shared secret cannot say who is calling.
+        return _bind_request_principal(request)
+
     token = request.headers.get("X-Gyrfalcon-Session-Token")
     if token != _session_token:
         raise HTTPException(status_code=401, detail="Invalid session token")
+    return _bind_request_principal(request)
+
+
+def _bind_request_principal(request: Request):
+    """Resolve the caller to a `Principal` and bind it for this request.
+
+    Precedence, most specific first:
+
+    1. `Authorization: Bearer gyr_live_…` — a per-user API key, for
+       non-interactive callers.
+    2. The session cookie from an OIDC login.
+    3. The shared dashboard token — **only while identity is disabled**.
+
+    Rule 3 is the one that matters. The shared token proves "an operator of
+    this install", not *which person*, so once identity is enabled it must not
+    grant access: otherwise it is a single credential that bypasses every
+    tenant boundary built in §17. With identity off it resolves to the LOCAL
+    principal, which is a real filtered identity rather than a bypass.
+    """
+    from gyrfalcon import identity
+
+    principal = _resolve_principal(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    identity._PRINCIPAL.set(principal)
+    return principal
+
+
+def _resolve_principal(request: Request):
+    from gyrfalcon import identity
+
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Bearer "):
+        from gyrfalcon.auth.store import get_auth_store
+
+        principal = get_auth_store().authenticate_api_key(header[7:].strip())
+        if principal is not None:
+            return principal
+
+    from gyrfalcon.auth.session import COOKIE_NAME, get_session_store
+
+    session = get_session_store().get(request.cookies.get(COOKIE_NAME))
+    if session is not None:
+        from gyrfalcon.auth.store import get_auth_store
+
+        principal = get_auth_store().principal_for(session.user_id, session.org_id)
+        if principal is not None:
+            return principal
+
+    if not identity.identity_enabled():
+        return identity.LOCAL
+    return None
 
 
 # --- Status ---
@@ -72,33 +146,75 @@ _engine_initialized = False
 import asyncio as _asyncio
 import threading as _ebus_lock_mod
 
-_agent_event_subscribers: dict[str, list] = {}   # session_id → [asyncio.Queue]
+_agent_event_subscribers: dict[str, list] = {}   # session_id → [(loop, asyncio.Queue)]
+_agent_event_backlog: dict[str, list] = {}       # session_id → events of the in-flight run
 _agent_event_lock = _ebus_lock_mod.Lock()
 
+# A long run can emit thousands of stream deltas. Only the tail is worth
+# replaying to a client that connects late — the terminal message.complete
+# carries the full text regardless.
+_AGENT_BACKLOG_MAX = 2000
 
-def _agent_event_subscribe(session_id: str, queue: "_asyncio.Queue") -> None:
+
+def _agent_run_begin(session_id: str) -> None:
+    """Mark a session as having an in-flight agent run.
+
+    Called before the worker thread starts, so the backlog exists the moment
+    the invoke response reaches the browser. `_maybe_subscribe_agent` uses the
+    presence of this entry to decide whether an agent is running — subscribers
+    cannot be the signal, because the first client to connect is by definition
+    not yet subscribed.
+    """
     with _agent_event_lock:
-        _agent_event_subscribers.setdefault(session_id, []).append(queue)
+        _agent_event_backlog[session_id] = []
+
+
+def _agent_run_end(session_id: str) -> None:
+    """Drop the backlog once the run is over.
+
+    Ordering matters: this runs strictly after the agent has persisted its
+    final message, so a client that subscribes too late to replay is
+    guaranteed to see the same content via session.resume instead.
+    """
+    with _agent_event_lock:
+        _agent_event_backlog.pop(session_id, None)
+
+
+def _agent_event_subscribe(session_id: str, queue: "_asyncio.Queue", loop) -> list[dict]:
+    """Register a queue and return the events it missed, atomically."""
+    with _agent_event_lock:
+        _agent_event_subscribers.setdefault(session_id, []).append((loop, queue))
+        return list(_agent_event_backlog.get(session_id, []))
 
 
 def _agent_event_unsubscribe(session_id: str, queue: "_asyncio.Queue") -> None:
     with _agent_event_lock:
         subs = _agent_event_subscribers.get(session_id, [])
-        if queue in subs:
-            subs.remove(queue)
+        for entry in list(subs):
+            if entry[1] is queue:
+                subs.remove(entry)
         if not subs:
             _agent_event_subscribers.pop(session_id, None)
 
 
 def _agent_event_publish(session_id: str, event: dict) -> None:
-    """Called from background thread — pushes event to all subscriber queues."""
+    """Called from a background thread — hand the event to each subscriber's loop.
+
+    asyncio.Queue is not thread-safe and put_nowait from a foreign thread does
+    not reliably wake the loop, so the put is scheduled onto the owning loop.
+    """
     with _agent_event_lock:
-        queues = list(_agent_event_subscribers.get(session_id, []))
-    for q in queues:
+        backlog = _agent_event_backlog.get(session_id)
+        if backlog is not None:
+            backlog.append(event)
+            if len(backlog) > _AGENT_BACKLOG_MAX:
+                del backlog[: len(backlog) - _AGENT_BACKLOG_MAX]
+        targets = list(_agent_event_subscribers.get(session_id, []))
+    for loop, q in targets:
         try:
-            q.put_nowait(event)
-        except Exception:
-            pass
+            loop.call_soon_threadsafe(q.put_nowait, event)
+        except RuntimeError:
+            pass  # loop already closed
 
 
 @app.get("/api/status")
@@ -1525,15 +1641,8 @@ async def toggle_application(request: Request, app_id: str, body: ToggleRequest)
 # --- Agents ---
 
 def _load_agents() -> list[dict]:
-    from gyrfalcon.gyrfalcon_constants import get_agents_file
-    p = get_agents_file()
-    if not p.exists():
-        return []
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return data.get("agents", []) if isinstance(data, dict) else []
-    except (json.JSONDecodeError, OSError):
-        return []
+    from gyrfalcon.agents import load_agents
+    return load_agents()
 
 
 def _save_agents(agents: list[dict]) -> None:
@@ -1742,41 +1851,34 @@ async def _run_agent_invoke(agent_id: str, message: str, session_id: str | None)
 
     import uuid as _uuid
     from gyrfalcon.gyrfalcon_state import SessionDB
-    from gyrfalcon.config import cfg_get
+    from gyrfalcon.agents import build_agent_kwargs
 
     sid = session_id or str(_uuid.uuid4())
+    agent_kwargs = build_agent_kwargs(agent_cfg)
 
     # ── Pre-create session so session.resume returns immediately ─────────────
     # We just create the session row — AIAgent will write the real messages.
+    # Tagging it with agent_id is what lets every later turn on this session
+    # (including ones sent from the chat page, not this invoke endpoint)
+    # rebuild the AIAgent from this same config instead of falling back to a
+    # generic chat agent — see tui_gateway/server.py:_get_or_create_agent.
     pre_db = SessionDB()
     try:
         if not pre_db.get_session(sid):
-            model = agent_cfg.get("model") or cfg_get("model.name", "")
-            pre_db.create_session(session_id=sid, source="chat", model=model)
+            pre_db.create_session(
+                session_id=sid, source="chat", model=agent_kwargs["model"], agent_id=agent_id,
+            )
     finally:
         pre_db.close()
 
-    # ── Build skill-injected instructions ────────────────────────────────────
-    instr = agent_cfg.get("instructions", "").strip()
-    skills = agent_cfg.get("skills", [])
-    if skills:
-        from gyrfalcon.tools.skills_tool import skill_view as _sv
-        import json as _j
-        parts = [instr] if instr else []
-        for sk in skills:
-            try:
-                d = _j.loads(_sv({"name": sk}))
-                if d.get("body"):
-                    parts.append(f"\n\n## Skill: {sk}\n{d['body']}")
-            except Exception:
-                pass
-        full_instructions = "\n".join(parts)
-    else:
-        full_instructions = instr
+    # Register the run before the thread starts, so a client that resumes the
+    # session the instant this endpoint responds can still subscribe.
+    _agent_run_begin(sid)
 
     # ── Background runner ────────────────────────────────────────────────────
     def _run() -> None:
         _agent_event_publish(sid, {"method": "status.update", "params": {"state": "thinking"}})
+        run_db = SessionDB()
         try:
             from gyrfalcon.run_agent import AIAgent
 
@@ -1794,40 +1896,26 @@ async def _run_agent_invoke(agent_id: str, message: str, session_id: str | None)
                 elif status == "complete":
                     _agent_event_publish(sid, {"method": "tool.complete", "params": {"name": tool_name}})
 
-            # Resolve provider credentials (base_url, api_key)
-            _provider_name = agent_cfg.get("provider") or cfg_get("provider.active", "copilot")
-            _base_url, _api_key = None, None
-            if _provider_name == "copilot":
-                from gyrfalcon.providers.copilot import get_copilot_credentials, is_authenticated
-                if is_authenticated():
-                    _base_url, _api_key = get_copilot_credentials()
-            else:
-                from gyrfalcon.providers import get_provider_profile as _gpp
-                _prof = _gpp(_provider_name)
-                if _prof:
-                    _base_url = _prof.base_url
-                    if _prof.auth_type == "api_key" and _prof.env_vars:
-                        _api_key = next((os.environ.get(ev) for ev in _prof.env_vars if os.environ.get(ev)), None)
-
+            # session_db is what makes the run durable: AIAgent gates every
+            # write on it, so without it the prompt and the reply are streamed
+            # and then lost, and resuming the session shows an empty chat.
             agent = AIAgent(
-                base_url=_base_url,
-                api_key=_api_key,
-                model=agent_cfg.get("model") or cfg_get("model.name", ""),
-                provider=_provider_name,
-                max_iterations=agent_cfg.get("max_iterations", 30),
+                **agent_kwargs,
                 quiet_mode=False,
                 skip_memory=False,
                 platform="chat",
                 session_id=sid,
-                enabled_toolsets=agent_cfg.get("enabled_toolsets") or None,
-                system_prompt_override=full_instructions or None,
+                session_db=run_db,
                 stream_delta_callback=_on_delta,
                 tool_progress_callback=_on_tool,
             )
-            # Don't re-send the user message — it was already persisted above.
-            # We call run_conversation directly, skipping the DB seed.
             result = agent.run_conversation(user_message=message)
             response = result.get("final_response", "")
+            # Retire the backlog before announcing completion. The reply is now
+            # in the DB, so a client that subscribes from here on must render it
+            # from session.resume only — replaying it as well would show the
+            # answer twice, since the client appends on message.complete.
+            _agent_run_end(sid)
             _agent_event_publish(sid, {
                 "method": "message.complete",
                 "params": {"content": response, "session_id": sid},
@@ -1839,6 +1927,8 @@ async def _run_agent_invoke(agent_id: str, message: str, session_id: str | None)
         finally:
             _agent_event_publish(sid, {"method": "status.update", "params": {"state": "idle"}})
             _agent_event_publish(sid, {"method": "_agent_done", "params": {}})
+            _agent_run_end(sid)
+            run_db.close()
 
     import threading as _threading
     _threading.Thread(target=_run, daemon=True, name=f"agent-{agent_id[:6]}").start()
@@ -1893,7 +1983,7 @@ async def websocket_gateway(ws: WebSocket):
     import asyncio as _asyncio_ws
     _active_agent_queues: dict[str, _asyncio_ws.Queue] = {}
     _agent_forward_tasks: list[_asyncio_ws.Task] = []
-    _loop = _asyncio_ws.get_event_loop()
+    _loop = _asyncio_ws.get_running_loop()
 
     async def _forward_agent_events(session_id: str, queue: _asyncio_ws.Queue) -> None:
         """Drain agent events from the queue and forward them to this WS."""
@@ -1913,15 +2003,21 @@ async def websocket_gateway(ws: WebSocket):
             _active_agent_queues.pop(session_id, None)
 
     def _maybe_subscribe_agent(session_id: str) -> None:
-        """Subscribe this WS to agent events for session_id if not already."""
+        """Subscribe this WS to agent events for session_id if a run is in flight.
+
+        Runs on the event loop thread, so replaying the backlog here — before
+        yielding — keeps missed events ahead of live ones in the queue.
+        """
         if session_id in _active_agent_queues:
             return
         with _agent_event_lock:
-            if session_id not in _agent_event_subscribers:
-                return   # No agent running for this session
+            if session_id not in _agent_event_backlog:
+                return   # No agent run in flight; session.resume already
+                         # returned whatever this session contains.
         q: _asyncio_ws.Queue = _asyncio_ws.Queue()
         _active_agent_queues[session_id] = q
-        _agent_event_subscribe(session_id, q)
+        for missed in _agent_event_subscribe(session_id, q, _loop):
+            q.put_nowait(missed)
         task = _loop.create_task(_forward_agent_events(session_id, q))
         _agent_forward_tasks.append(task)
         logger.info(f"WS subscribed to agent events for session {session_id[:8]}")
@@ -1963,6 +2059,493 @@ async def websocket_gateway(ws: WebSocket):
             task.cancel()
         server.stop()
         logger.info("WebSocket connection closed")
+
+
+# --- Flow Engine (spec 15-flow.md) ---
+# Conventions from §11: filter-by-POST with a structured predicate, a dedicated
+# /history endpoint returning pre-bucketed aggregates, and set_state as an
+# explicit action endpoint rather than a PATCH — because it is a request that
+# may be refused.
+
+class FlowRunFilter(BaseModel):
+    limit: int = 50
+    offset: int = 0
+    state_types: Optional[list[str]] = None
+    name: Optional[str] = None
+    kind: Optional[str] = None
+    flow_run_id: Optional[str] = None
+
+
+def _flow_store():
+    from gyrfalcon.flow.store import get_store
+    return get_store()
+
+
+@app.get("/api/flow/definitions")
+async def list_flow_definitions(request: Request):
+    """Registered @flow templates — the code-first analogue of a definition."""
+    _verify_token(request)
+    from gyrfalcon.flow.registry import list_definitions
+    return {"definitions": list_definitions()}
+
+
+@app.post("/api/flow/definitions/reload")
+async def reload_flow_definitions(request: Request):
+    """Re-scan ~/.gyrfalcon/flows/ for files added or changed since startup.
+
+    `discover_flows()` otherwise runs only once, at startup, so a file dropped
+    in afterwards stays invisible until the process restarts — and the list
+    endpoint's "Refresh" only re-reads the in-memory registry, which makes the
+    file look like it was ignored rather than never looked for.
+
+    Registered under `/definitions/reload` before the `/{name}/…` routes so it
+    is not swallowed as a definition literally named "reload".
+    """
+    _verify_token(request)
+    from gyrfalcon.flow.registry import discover_flows, get_import_errors, list_definitions
+    imported = discover_flows()
+    return {
+        "imported": imported,
+        "errors": get_import_errors(),
+        "definitions": list_definitions(),
+    }
+
+
+@app.get("/api/flow/definitions/{name}/source")
+async def get_flow_definition_source(request: Request, name: str):
+    _verify_token(request)
+    from gyrfalcon.flow.registry import get_source
+    try:
+        return get_source(name)
+    except ValueError as e:
+        raise HTTPException(404 if "No definition" in str(e) else 400, str(e))
+
+
+class FlowSourceUpdate(BaseModel):
+    content: str
+
+
+@app.put("/api/flow/definitions/{name}/source")
+async def save_flow_definition_source(request: Request, name: str, body: FlowSourceUpdate):
+    _verify_token(request)
+    from gyrfalcon.flow.registry import save_source
+    try:
+        save_source(name, body.content)
+    except ValueError as e:
+        raise HTTPException(404 if "No definition" in str(e) else 400, str(e))
+    return {"status": "saved"}
+
+
+@app.delete("/api/flow/definitions/{name}")
+async def delete_flow_definition(request: Request, name: str):
+    _verify_token(request)
+    from gyrfalcon.flow.registry import delete_source
+
+    affected = [d["id"] for d in _dep_store().list_all() if d["flow_name"] == name]
+    try:
+        delete_source(name)
+    except ValueError as e:
+        raise HTTPException(404 if "No definition" in str(e) else 400, str(e))
+    result = {"status": "deleted"}
+    if affected:
+        result["note"] = (
+            f"{len(affected)} deployment(s) still reference this flow and will "
+            f"now be skipped by the runner rather than firing."
+        )
+    return result
+
+
+class FlowDefinitionDuplicate(BaseModel):
+    new_name: str
+
+
+@app.post("/api/flow/definitions/{name}/duplicate")
+async def duplicate_flow_definition(request: Request, name: str, body: FlowDefinitionDuplicate):
+    _verify_token(request)
+    from gyrfalcon.flow.registry import duplicate_source
+    try:
+        duplicate_source(name, body.new_name.strip())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    from gyrfalcon.flow.registry import list_definitions
+    dup = next((d for d in list_definitions() if d["name"] == body.new_name.strip()), None)
+    return dup or {"name": body.new_name.strip()}
+
+
+class FlowDefinitionRun(BaseModel):
+    parameters: dict = {}
+
+
+@app.post("/api/flow/definitions/{name}/run")
+async def run_flow_definition_now(request: Request, name: str, body: FlowDefinitionRun):
+    """Run a definition directly — no deployment needed. The Definitions
+    page's own Run button (§14.12), for ad-hoc parameters rather than a
+    saved schedule."""
+    _verify_token(request)
+    from gyrfalcon.flow.registry import run_definition_now
+    try:
+        run_id = run_definition_now(name, body.parameters)
+    except ValueError as e:
+        raise HTTPException(404 if "No definition" in str(e) else 400, str(e))
+    return {"run_id": run_id}
+
+
+@app.post("/api/flow/runs/filter")
+async def filter_flow_runs(request: Request, body: FlowRunFilter):
+    """Filter by POST: structured predicates do not fit in a query string."""
+    _verify_token(request)
+    runs, total = _flow_store().list_runs(
+        limit=body.limit, offset=body.offset, state_types=body.state_types,
+        name=body.name, kind=body.kind, flow_run_id=body.flow_run_id,
+    )
+    return {"runs": runs, "total": total}
+
+
+@app.get("/api/flow/runs/{run_id}")
+async def get_flow_run(request: Request, run_id: str):
+    _verify_token(request)
+    run = _flow_store().get_run(run_id)
+    if not run:
+        raise HTTPException(404, f"Flow run not found: {run_id}")
+    return run
+
+
+@app.get("/api/flow/runs/{run_id}/history")
+async def get_flow_run_history(request: Request, run_id: str):
+    """Every proposed transition, accepted or not — the audit trail."""
+    _verify_token(request)
+    if not _flow_store().get_run(run_id):
+        raise HTTPException(404, f"Flow run not found: {run_id}")
+    return {"history": _flow_store().get_history(run_id)}
+
+
+@app.get("/api/flow/runs/{run_id}/graph")
+async def get_flow_run_graph(request: Request, run_id: str):
+    """Nodes and edges for the run graph. The DAG is discovered by execution."""
+    _verify_token(request)
+    if not _flow_store().get_run(run_id):
+        raise HTTPException(404, f"Flow run not found: {run_id}")
+    return _flow_store().get_graph(run_id)
+
+
+@app.post("/api/flow/runs/{run_id}/cancel")
+async def cancel_flow_run(request: Request, run_id: str):
+    """An action endpoint, not a PATCH: the request may be refused."""
+    _verify_token(request)
+    run = _flow_store().request_cancel(run_id)
+    if run is None:
+        raise HTTPException(404, f"Flow run not found: {run_id}")
+    if run["is_final"]:
+        return {"status": "refused", "reason": f"run is already {run['state_name']}", "run": run}
+    return {"status": "cancelling", "run": run}
+
+
+@app.get("/api/flow/stats")
+async def get_flow_stats(request: Request, hours: int = 24, buckets: int = 24):
+    """Pre-bucketed so the UI never aggregates (§11)."""
+    _verify_token(request)
+    store = _flow_store()
+    return {
+        "counts": store.counts_by_state(),
+        "history": store.history_buckets(hours=hours, buckets=buckets),
+    }
+
+
+@app.get("/api/flow/tasks")
+async def list_flow_human_tasks(request: Request):
+    """Pending approval gates — the human-in-the-loop inbox (§8)."""
+    _verify_token(request)
+    from gyrfalcon.flow.pause import list_pending
+    return {"tasks": list_pending()}
+
+
+@app.post("/api/flow/tasks/{run_id}/respond")
+async def respond_to_flow_task(request: Request, run_id: str):
+    """Answer an approval gate.
+
+    Authorization is enforced in `resume_flow_run` rather than here, so the
+    same rule applies however the answer arrives — dashboard, REST gateway, or
+    chat (§16.4's tier-1 types answer in place). This endpoint used to resume
+    *any* run for *any* caller (§17.1).
+    """
+    principal = _verify_token(request)
+    from gyrfalcon.flow.pause import NotThePerformerError, resume_flow_run
+
+    body = await request.json()
+    try:
+        result = resume_flow_run(
+            run_id, run_input=body.get("run_input"), principal=principal
+        )
+    except NotThePerformerError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    return {
+        "status": "resumed",
+        "flow_run_id": result.flow_run_id,
+        "answered_by": principal.user_id,
+    }
+
+
+# --- Deployments (spec §9.1) ---
+
+class FlowDeploymentCreate(BaseModel):
+    name: str
+    flow_name: str
+    schedule: Optional[str] = None
+    parameters: dict = {}
+    tags: list[str] = []
+    concurrency_limit: Optional[int] = None
+
+
+def _dep_store():
+    from gyrfalcon.flow.deployments import get_deployment_store
+    return get_deployment_store()
+
+
+@app.get("/api/flow/deployments")
+async def list_flow_deployments(request: Request):
+    _verify_token(request)
+    from gyrfalcon.flow.runner import is_runner_running
+    return {"deployments": _dep_store().list_all(), "runner_running": is_runner_running()}
+
+
+@app.post("/api/flow/deployments")
+async def create_flow_deployment(request: Request, body: FlowDeploymentCreate):
+    _verify_token(request)
+    try:
+        dep = _dep_store().create(
+            name=body.name, flow_name=body.flow_name, schedule=body.schedule,
+            parameters=body.parameters, tags=body.tags,
+            concurrency_limit=body.concurrency_limit,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    from gyrfalcon.flow.runner import is_runner_running
+    result = dict(dep)
+    if dep.get("schedule") and not is_runner_running():
+        result["note"] = "Runner is not running — this deployment will not fire until it starts."
+    return result
+
+
+@app.put("/api/flow/deployments/{deployment_id}")
+async def update_flow_deployment(request: Request, deployment_id: str, body: FlowDeploymentCreate):
+    _verify_token(request)
+    dep = _dep_store().update(
+        deployment_id, name=body.name, schedule=body.schedule,
+        parameters=body.parameters, tags=body.tags,
+        concurrency_limit=body.concurrency_limit,
+    )
+    if dep is None:
+        raise HTTPException(404, f"Deployment not found: {deployment_id}")
+    return dep
+
+
+@app.post("/api/flow/deployments/{deployment_id}/run")
+async def run_flow_deployment_now(request: Request, deployment_id: str):
+    _verify_token(request)
+    from gyrfalcon.flow.runner import get_runner
+
+    try:
+        run_id = get_runner().run_now(deployment_id)
+    except ValueError as e:
+        raise HTTPException(404 if "No deployment" in str(e) else 400, str(e))
+    return {"run_id": run_id}
+
+
+@app.post("/api/flow/deployments/{deployment_id}/pause")
+async def pause_flow_deployment(request: Request, deployment_id: str):
+    _verify_token(request)
+    dep = _dep_store().set_paused(deployment_id, True)
+    if dep is None:
+        raise HTTPException(404, f"Deployment not found: {deployment_id}")
+    return dep
+
+
+@app.post("/api/flow/deployments/{deployment_id}/resume")
+async def resume_flow_deployment(request: Request, deployment_id: str):
+    _verify_token(request)
+    dep = _dep_store().set_paused(deployment_id, False)
+    if dep is None:
+        raise HTTPException(404, f"Deployment not found: {deployment_id}")
+    return dep
+
+
+@app.delete("/api/flow/deployments/{deployment_id}")
+async def delete_flow_deployment(request: Request, deployment_id: str):
+    _verify_token(request)
+    if not _dep_store().delete(deployment_id):
+        raise HTTPException(404, f"Deployment not found: {deployment_id}")
+    return {"status": "deleted"}
+
+
+# --- Events (spec §10) ---
+
+@app.get("/api/flow/events")
+async def list_flow_events(
+    request: Request, limit: int = 100, offset: int = 0,
+    event_type: Optional[str] = None, resource_id: Optional[str] = None,
+):
+    _verify_token(request)
+    events, total = _flow_store().events.list_events(
+        limit=limit, offset=offset, event_type=event_type, resource_id=resource_id,
+    )
+    return {"events": events, "total": total}
+
+
+@app.get("/api/flow/events/{event_id}/chain")
+async def get_flow_event_chain(request: Request, event_id: str):
+    """The causal `follows` chain leading to this event."""
+    _verify_token(request)
+    return {"chain": _flow_store().events.follows_chain(event_id)}
+
+
+# --- Authentication (spec 15-flow.md §17.11 step 8) ---
+#
+# Only mounted meaningfully when identity.enabled is on. With it off the
+# dashboard keeps its shared-token behaviour and every request is the LOCAL
+# principal, so a single-user install sees no change at all.
+
+@app.get("/auth/status")
+async def auth_status():
+    """What the login page needs before anyone has logged in — deliberately
+    unauthenticated, and deliberately says nothing about who exists."""
+    from gyrfalcon import identity
+    from gyrfalcon.auth.oidc import oidc_config
+
+    return {
+        "identity_enabled": identity.identity_enabled(),
+        "oidc_configured": oidc_config().enabled,
+    }
+
+
+@app.get("/auth/login")
+async def auth_login(request: Request, next: str = "/"):
+    from gyrfalcon.auth.oidc import OIDCError, begin_login
+    from gyrfalcon.auth.session import get_session_store
+
+    try:
+        url, attempt = begin_login(next_url=next)
+    except OIDCError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    get_session_store().remember_attempt(attempt)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request, code: str = "", state: str = "",
+                        error: str = "", error_description: str = ""):
+    from gyrfalcon.auth.oidc import OIDCError, exchange_code, identity_from_claims
+    from gyrfalcon.auth.session import COOKIE_NAME, get_session_store
+
+    if error:
+        raise HTTPException(status_code=400,
+                            detail=f"Sign-in failed: {error_description or error}")
+
+    store = get_session_store()
+    # Single-use: a replayable `state` would defeat the CSRF protection it is
+    # there to provide.
+    attempt = store.take_attempt(state)
+    if attempt is None or attempt.expired():
+        raise HTTPException(status_code=400,
+                            detail="Login attempt is unknown or has expired; start again")
+    try:
+        claims = exchange_code(code, attempt)
+        principal = identity_from_claims(claims)
+    except OIDCError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
+
+    if principal is None:
+        # Authenticated by the IdP, but not a member of anything here.
+        # Signing in is not the same as being allowed in.
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not a member of any organization on this server.",
+        )
+
+    session = store.create(principal.user_id, principal.tenant_id)
+    response = RedirectResponse(attempt.next_url or "/", status_code=302)
+    response.set_cookie(
+        COOKIE_NAME, session.session_id,
+        httponly=True,                       # unreadable from JavaScript
+        samesite="lax",                      # survives the IdP redirect back
+        secure=request.url.scheme == "https",
+        max_age=int(session.ttl),
+        path="/",
+    )
+    return response
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request):
+    from gyrfalcon.auth.session import COOKIE_NAME, get_session_store
+
+    get_session_store().destroy(request.cookies.get(COOKIE_NAME))
+    response = JSONResponse({"status": "signed out"})
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/auth/me")
+async def auth_me(request: Request):
+    principal = _verify_token(request)
+    orgs = []
+    try:
+        from gyrfalcon.auth.store import get_auth_store
+
+        store = get_auth_store()
+        for m in store.memberships(principal.user_id):
+            org = store.get_org(m["org_id"])
+            if org:
+                orgs.append({"id": org["id"], "name": org["name"],
+                             "roles": m["roles"]})
+    except Exception:
+        logger.debug("no identity store available", exc_info=True)
+    return {
+        "user_id": principal.user_id,
+        "tenant_id": principal.tenant_id,
+        "display_name": principal.display_name,
+        "email": principal.email,
+        "roles": sorted(principal.roles),
+        "source": principal.source,
+        "organizations": orgs,
+    }
+
+
+@app.get("/api/auth/keys")
+async def list_api_keys(request: Request):
+    principal = _verify_token(request)
+    from gyrfalcon.auth.store import get_auth_store
+
+    return {"keys": get_auth_store().list_api_keys(principal.user_id)}
+
+
+@app.post("/api/auth/keys")
+async def create_api_key(request: Request):
+    """Mint a key for the caller. The plaintext is in this response and
+    nowhere else — only its hash is stored."""
+    principal = _verify_token(request)
+    from gyrfalcon.auth.store import get_auth_store
+
+    body = await request.json()
+    key, meta = get_auth_store().mint_api_key(
+        principal.user_id, principal.tenant_id, name=str(body.get("name", ""))[:100]
+    )
+    return {"key": key, **meta,
+            "warning": "This is the only time the key is shown."}
+
+
+@app.delete("/api/auth/keys/{key_id}")
+async def revoke_api_key(request: Request, key_id: str):
+    principal = _verify_token(request)
+    from gyrfalcon.auth.store import get_auth_store
+
+    store = get_auth_store()
+    mine = {k["id"] for k in store.list_api_keys(principal.user_id)}
+    if key_id not in mine:
+        # 404 rather than 403: whether someone else's key exists is not the
+        # caller's business.
+        raise HTTPException(status_code=404, detail="No such key")
+    store.revoke_api_key(key_id)
+    return {"status": "revoked", "id": key_id}
 
 
 # --- SPA Serving ---
@@ -2034,6 +2617,34 @@ def run_dashboard():
     logger.debug("Beginning of run_dashboard")
     import uvicorn
     import threading as _t
+
+    # Turn on flow-run persistence for this process. The library defaults it
+    # off so a plain script has zero dependencies (§13.5 phases 1-3); the
+    # dashboard is exactly the durable, externally-controllable surface phase 4
+    # exists for, so it opts in here rather than the engine assuming it.
+    from gyrfalcon.flow.engine import _BaseRunEngine
+    _BaseRunEngine.persist = True
+
+    # Same reasoning as persistence above: a deployment's schedule is inert
+    # without something ticking it, and the dashboard process is where that
+    # something lives for a single-box install (§9.2, Runner).
+    from gyrfalcon.flow.runner import start_runner
+    start_runner()
+
+    # Load plugins at startup, matching the CLI (cli.py) and the TUI gateway
+    # (tui_gateway/server.py). Plugins register new agent capabilities (tools,
+    # hooks, CLI commands); without this the dashboard could serve for minutes
+    # with none of them wired up, unlike the other two entry points.
+    from gyrfalcon.plugins import PluginManager
+    PluginManager().discover_and_load()
+
+    # Separately, import any user flow files (~/.gyrfalcon/flows/, no manifest
+    # needed — see gyrfalcon/flow/registry.py). This is not plugin loading: a
+    # flow is a complete definition on its own the moment it's decorated, so it
+    # gets its own directory rather than riding on the plugin mechanism.
+    from gyrfalcon.flow.registry import discover_flows
+    discover_flows()
+
     config = load_config()
     host = config.get("web", {}).get("host", "127.0.0.1")
     port = config.get("web", {}).get("port", 9119)

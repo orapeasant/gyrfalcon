@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import time
-import pytest
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import pytest
 
 # ── fixtures / helpers ────────────────────────────────────────────────────────
 
@@ -723,6 +722,7 @@ class TestSchedulerToolReporting:
 
     def _tool(self, tmp_path, args):
         import json as _json
+
         from gyrfalcon.scheduler import JobStore
         from gyrfalcon.tools import scheduler_tool as st
 
@@ -757,6 +757,7 @@ class TestSchedulerToolReporting:
         """Regression: trigger wrote a float to 'next_run', which get_due_jobs ignores."""
         import json as _json
         from datetime import datetime
+
         from gyrfalcon.scheduler import JobStore
         from gyrfalcon.tools import scheduler_tool as st
 
@@ -785,6 +786,7 @@ class TestProfileFlagScoping:
 
     def _home_after(self, argv):
         import sys as _sys
+
         from gyrfalcon_cli.main import _apply_profile_override
 
         with patch.object(_sys, "argv", argv), \
@@ -794,9 +796,13 @@ class TestProfileFlagScoping:
             return env.get("GYRFALCON_HOME")
 
     def test_prompt_flag_is_not_a_profile(self):
-        assert self._home_after(
+        # Not a profile switch, but GYRFALCON_HOME is still defaulted to
+        # ~/.gyrfalcon (not left unset) — the point being tested is that it
+        # is NOT redirected to a bogus "-p ping"-named profile.
+        home = self._home_after(
             ["gyrfalcon", "scheduler", "add", "-s", "1h", "-p", "ping"]
-        ) is None
+        )
+        assert home is not None and home.endswith("/.gyrfalcon") and "ping" not in home
 
     def test_global_profile_flag_still_applies(self):
         home = self._home_after(["gyrfalcon", "--profile", "work", "scheduler", "list"])

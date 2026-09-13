@@ -67,6 +67,49 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "scheduler": {
         "enabled": True,
     },
+    # Multi-user identity (spec 15-flow.md §17). Off by default: a personal
+    # install stays single-user and everything is owned by the LOCAL principal.
+    # Turning it on makes a missing principal an error rather than a guess.
+    "identity": {
+        "enabled": False,
+        # OpenID Connect login (§17.11 step 8). The IdP proves who someone is;
+        # orgs and roles live in gyrfalcon's own identity store, so nothing
+        # here grants access on its own.
+        "oidc": {
+            "issuer": "",          # e.g. https://login.microsoftonline.com/<tenant>/v2.0
+            "client_id": "",
+            "client_secret": "",   # omit for a public client (PKCE alone)
+            "redirect_uri": "",    # e.g. http://127.0.0.1:9119/auth/callback
+            "scopes": ["openid", "profile", "email"],
+        },
+    },
+    # Flow run/event/deployment persistence (spec 15-flow.md §15.7).
+    # Governs the flow stores only — session history stays on SQLite via
+    # gyrfalcon_state.SessionDB regardless of what is set here (§15.12).
+    "flow": {
+        "store": {
+            "backend": "sqlite",          # sqlite | postgres
+            # sqlite only. Empty means <GYRFALCON_HOME>/flow.db, resolved through
+            # get_gyrfalcon_home() so profiles stay isolated — a literal
+            # "~/.gyrfalcon/flow.db" default here would break that.
+            "path": "",
+            "dsn": "",                    # postgres only
+            "pool_min_size": 1,
+            "pool_max_size": 10,
+            "statement_timeout_ms": 30000,
+        },
+        # Noisy-neighbour protection (§17.8). Only meaningful with identity
+        # enabled; a single-user install is its own tenant and capping it
+        # would just be a slower gyrfalcon.
+        "limits": {
+            # Concurrent submitted tasks per tenant. 0 = unlimited. Empty
+            # means "half the pool", which is what lets two tenants always
+            # both make progress instead of one filling the pool.
+            "tenant_max_concurrent_tasks": None,
+            # Non-terminal flow runs per tenant. 0 = unlimited.
+            "tenant_max_active_runs": 0,
+        },
+    },
     "plugins": {
         "enabled": [],
         "disabled": [],

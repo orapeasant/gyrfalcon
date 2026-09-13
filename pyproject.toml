@@ -41,6 +41,12 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+# PostgreSQL flow store (spec 15-flow.md §15.3a). Optional on purpose: SQLite is
+# the default backend and needs nothing installed, so a single-box install stays
+# dependency-free. pg8000 is pure Python — no libpq, no build step.
+postgres = [
+    "pg8000>=1.31",
+]
 
 [project.scripts]
 gyrfalcon = "gyrfalcon_cli.main:main"

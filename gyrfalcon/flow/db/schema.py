@@ -1,0 +1,305 @@
+"""Table definitions, written once and rendered per backend.
+
+Spec: §15.5. The drift risk §15.3 rejects is two hand-maintained copies of the
+schema; the fix is one definition and a `type_map()`. A column added here
+appears on both backends or on neither.
+
+The vocabulary is deliberately tiny — TEXT, INTEGER, REAL, BOOL — because
+that is all this schema actually uses. Anything needing a richer type belongs
+in a JSON-encoded TEXT column, which is what `parameters`, `tags`, `payload`,
+and `state_details` already are.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Sequence
+
+if TYPE_CHECKING:
+    from gyrfalcon.flow.db.base import Dialect
+
+
+@dataclass(frozen=True)
+class Column:
+    name: str
+    type: str                      # TEXT | INTEGER | REAL | BOOL
+    constraints: str = ""          # "PRIMARY KEY", "NOT NULL DEFAULT 0", ...
+
+
+@dataclass(frozen=True)
+class Index:
+    name: str
+    table: str
+    expr: str                      # "flow_name" or "created_at DESC"
+
+
+@dataclass(frozen=True)
+class Table:
+    name: str
+    columns: Sequence[Column]
+    table_constraints: Sequence[str] = field(default_factory=tuple)
+    indexes: Sequence[Index] = field(default_factory=tuple)
+
+    def create_sql(self, dialect: "Dialect") -> str:
+        types = dialect.type_map()
+        parts = [
+            f"    {c.name} {types[c.type]}" + (f" {c.constraints}" if c.constraints else "")
+            for c in self.columns
+        ]
+        parts.extend(f"    {tc}" for tc in self.table_constraints)
+        body = ",\n".join(parts)
+        return f"CREATE TABLE IF NOT EXISTS {self.name} (\n{body}\n)"
+
+
+# --------------------------------------------------------------------------
+# flow runs — the durable record every UI and API reads from (§13.5)
+# --------------------------------------------------------------------------
+
+FLOW_RUNS = Table(
+    name="flow_runs",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("name", "TEXT", "NOT NULL"),
+        Column("kind", "TEXT", "NOT NULL"),          # 'flow' | 'task'
+        Column("state_type", "TEXT", "NOT NULL"),
+        Column("state_name", "TEXT"),
+        Column("parameters", "TEXT"),
+        Column("result", "TEXT"),
+        Column("error", "TEXT"),
+        Column("parent_run_id", "TEXT"),
+        Column("flow_run_id", "TEXT"),               # owning flow run, for task runs
+        Column("tags", "TEXT"),
+        Column("retries", "INTEGER", "DEFAULT 0"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("started_at", "REAL"),
+        Column("updated_at", "REAL", "NOT NULL"),
+        Column("finished_at", "REAL"),
+        # Which engine instance is executing this run, and when it last said
+        # so (§15.6.1). NULL on both means nobody is: either the run is
+        # terminal, or its owner released it, or it was never claimed.
+        Column("owner_id", "TEXT"),
+        Column("heartbeat_at", "REAL"),
+        # Who this belongs to (§17.4). NOT NULL with a `local` default: a
+        # single-user install has no principal to supply and must keep
+        # working, and a row that somehow escapes without one lands in a
+        # sentinel tenant rather than a real customer's.
+        Column("user_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+        Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+    ),
+    indexes=(
+        Index("idx_runs_state", "flow_runs", "state_type"),
+        Index("idx_runs_created", "flow_runs", "created_at DESC"),
+        Index("idx_runs_parent", "flow_runs", "parent_run_id"),
+        Index("idx_runs_flow", "flow_runs", "flow_run_id"),
+        Index("idx_runs_heartbeat", "flow_runs", "heartbeat_at"),
+        # Every list query in the dashboard is tenant-scoped, so the plain
+        # created_at index alone would force a scan across all tenants.
+        Index("idx_runs_owner", "flow_runs", "tenant_id, user_id, created_at DESC"),
+    ),
+)
+
+# Every proposed transition, accepted or not. This is the audit trail.
+#
+# There is no surrogate `id` column: (run_id, seq) is the real key, and the
+# AUTOINCREMENT integer that used to sit here was never read by any query.
+# Dropping it also removes the one place this schema would have needed a
+# SERIAL/AUTOINCREMENT type mapping, which the two backends spell differently.
+FLOW_RUN_STATES = Table(
+    name="flow_run_states",
+    columns=(
+        Column("run_id", "TEXT", "NOT NULL"),
+        Column("seq", "INTEGER", "NOT NULL"),
+        Column("state_type", "TEXT", "NOT NULL"),
+        Column("state_name", "TEXT"),
+        Column("message", "TEXT"),
+        Column("state_details", "TEXT"),
+        Column("orchestration", "TEXT"),             # ACCEPT | REJECT | ABORT | WAIT
+        Column("at", "REAL", "NOT NULL"),
+    ),
+    table_constraints=("PRIMARY KEY (run_id, seq)",),
+    indexes=(Index("idx_states_run", "flow_run_states", "run_id, seq"),),
+)
+
+FLOW_RUN_EDGES = Table(
+    name="flow_run_edges",
+    columns=(
+        Column("downstream", "TEXT", "NOT NULL"),
+        Column("upstream", "TEXT", "NOT NULL"),
+        Column("kind", "TEXT", "NOT NULL DEFAULT 'data'"),  # data | wait_for | encapsulating
+    ),
+    table_constraints=("PRIMARY KEY (downstream, upstream, kind)",),
+)
+
+RUN_TABLES = (FLOW_RUNS, FLOW_RUN_STATES, FLOW_RUN_EDGES)
+
+
+# --------------------------------------------------------------------------
+# events (§10)
+# --------------------------------------------------------------------------
+
+FLOW_EVENTS = Table(
+    name="flow_events",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("occurred", "REAL", "NOT NULL"),
+        Column("event", "TEXT", "NOT NULL"),
+        Column("resource_id", "TEXT", "NOT NULL"),
+        Column("resource", "TEXT", "NOT NULL"),
+        Column("related", "TEXT", "NOT NULL"),
+        Column("payload", "TEXT", "NOT NULL"),
+        Column("follows", "TEXT"),
+        # Who this belongs to (§17.4). NOT NULL with a `local` default: a
+        # single-user install has no principal to supply and must keep
+        # working, and a row that somehow escapes without one lands in a
+        # sentinel tenant rather than a real customer's.
+        Column("user_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+        Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+    ),
+    indexes=(
+        Index("idx_events_owner", "flow_events", "tenant_id, occurred DESC"),
+        Index("idx_events_occurred", "flow_events", "occurred DESC"),
+        Index("idx_events_type", "flow_events", "event"),
+        Index("idx_events_resource", "flow_events", "resource_id"),
+    ),
+)
+
+EVENT_TABLES = (FLOW_EVENTS,)
+
+
+# --------------------------------------------------------------------------
+# deployments (§9.1)
+# --------------------------------------------------------------------------
+
+FLOW_DEPLOYMENTS = Table(
+    name="flow_deployments",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("name", "TEXT", "NOT NULL UNIQUE"),
+        Column("flow_name", "TEXT", "NOT NULL"),
+        Column("schedule_raw", "TEXT"),
+        Column("schedule", "TEXT"),
+        Column("parameters", "TEXT", "NOT NULL DEFAULT '{}'"),
+        Column("tags", "TEXT", "NOT NULL DEFAULT '[]'"),
+        Column("concurrency_limit", "INTEGER"),
+        Column("enforce_parameter_schema", "BOOL", "NOT NULL DEFAULT 0"),
+        Column("paused", "BOOL", "NOT NULL DEFAULT 0"),
+        Column("next_run_at", "TEXT"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("updated_at", "REAL", "NOT NULL"),
+        # Who this belongs to (§17.4). NOT NULL with a `local` default: a
+        # single-user install has no principal to supply and must keep
+        # working, and a row that somehow escapes without one lands in a
+        # sentinel tenant rather than a real customer's.
+        Column("user_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+        Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+    ),
+    indexes=(
+        Index("idx_deployments_flow", "flow_deployments", "flow_name"),
+        Index("idx_deployments_owner", "flow_deployments", "tenant_id, name"),
+    ),
+)
+
+DEPLOYMENT_TABLES = (FLOW_DEPLOYMENTS,)
+
+
+# --------------------------------------------------------------------------
+# identity (§17.11 step 8)
+#
+# These are not flow tables, and this module's name is now a little narrow for
+# what it holds. They live here anyway because they share one database, one
+# dialect layer, and — critically — one migration version: splitting them out
+# would mean two version counters for one physical schema, which is how a
+# half-migrated database happens. Renaming the package is the tidier fix and
+# is not worth the churn today.
+# --------------------------------------------------------------------------
+
+#: A customer. Gyrfalcon owns this concept rather than inheriting the IdP's
+#: tenant, so one deployment can serve several organizations and an org can
+#: outlive a change of identity provider.
+AUTH_ORGS = Table(
+    name="auth_orgs",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("name", "TEXT", "NOT NULL UNIQUE"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("disabled", "BOOL", "NOT NULL DEFAULT 0"),
+    ),
+)
+
+#: A person. `subject` + `issuer` is the IdP's identity for them; `id` is
+#: ours and never changes, so rows stay attributed across an email change or
+#: a move to a different provider.
+AUTH_USERS = Table(
+    name="auth_users",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("issuer", "TEXT", "NOT NULL"),
+        Column("subject", "TEXT", "NOT NULL"),
+        Column("email", "TEXT"),
+        Column("display_name", "TEXT"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("last_login_at", "REAL"),
+        Column("disabled", "BOOL", "NOT NULL DEFAULT 0"),
+    ),
+    table_constraints=("UNIQUE (issuer, subject)",),
+    indexes=(Index("idx_users_email", "auth_users", "email"),),
+)
+
+#: Which orgs a person belongs to, and what they may do in each. Roles are
+#: per-membership, not per-user: being an operator at one customer must not
+#: make you one everywhere.
+AUTH_MEMBERSHIPS = Table(
+    name="auth_memberships",
+    columns=(
+        Column("user_id", "TEXT", "NOT NULL"),
+        Column("org_id", "TEXT", "NOT NULL"),
+        Column("roles", "TEXT", "NOT NULL DEFAULT '[]'"),
+        Column("created_at", "REAL", "NOT NULL"),
+    ),
+    table_constraints=("PRIMARY KEY (user_id, org_id)",),
+    indexes=(Index("idx_memberships_org", "auth_memberships", "org_id"),),
+)
+
+#: Per-user credentials for non-interactive callers (§17.3). Only the hash is
+#: stored — a leaked database must not yield working keys — with a short
+#: non-secret prefix kept so a key can be looked up without scanning.
+AUTH_API_KEYS = Table(
+    name="auth_api_keys",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("prefix", "TEXT", "NOT NULL"),
+        Column("key_hash", "TEXT", "NOT NULL"),
+        Column("user_id", "TEXT", "NOT NULL"),
+        Column("org_id", "TEXT", "NOT NULL"),
+        Column("name", "TEXT"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("last_used_at", "REAL"),
+        Column("revoked_at", "REAL"),
+    ),
+    indexes=(
+        Index("idx_api_keys_prefix", "auth_api_keys", "prefix"),
+        Index("idx_api_keys_user", "auth_api_keys", "user_id"),
+    ),
+)
+
+AUTH_TABLES = (AUTH_ORGS, AUTH_USERS, AUTH_MEMBERSHIPS, AUTH_API_KEYS)
+
+
+ALL_TABLES = RUN_TABLES + EVENT_TABLES + DEPLOYMENT_TABLES + AUTH_TABLES
+
+
+def render(tables: Sequence[Table], dialect: "Dialect") -> list[str]:
+    """DDL for `tables`, as separate statements.
+
+    Separate rather than one script because PostgreSQL will not take a
+    multi-statement string through the same path SQLite's `executescript`
+    uses (§15.4).
+    """
+    out: list[str] = []
+    for table in tables:
+        out.append(table.create_sql(dialect))
+        for idx in table.indexes:
+            out.append(
+                f"CREATE INDEX IF NOT EXISTS {idx.name} ON {idx.table}({idx.expr})"
+            )
+    return out

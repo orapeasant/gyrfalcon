@@ -112,6 +112,18 @@ def resolve_toolset(name: str, visited: set | None = None) -> set[str]:
 
     toolset = TOOLSETS.get(name)
     if not toolset:
+        # Not a static toolset — check for a dynamically-registered one, e.g.
+        # "mcp-{server_name}" (stdio tools discovered at connect time,
+        # openapi tools registered at startup; see mcp_tool.py /
+        # openapi_mcp_tool.py). Falling straight through to "treat as an
+        # individual tool name" here is exactly why an agent's attached MCP
+        # servers previously resolved to nothing: "mcp-foo" is a toolset
+        # name, not a tool name, and get_schemas() silently drops names it
+        # doesn't recognize.
+        from gyrfalcon.tools import registry
+        dynamic = registry.get_tool_names_for_toolset(name)
+        if dynamic:
+            return set(dynamic)
         return {name}  # Treat as individual tool name
 
     tools: set[str] = set()

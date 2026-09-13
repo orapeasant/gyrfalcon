@@ -184,6 +184,11 @@ class GyrfalconCLI:
         self._plugin_manager = PluginManager()
         self._plugin_manager.discover_and_load()
 
+        # User flow files (~/.gyrfalcon/flows/) — a separate, manifest-free
+        # mechanism from plugins; see gyrfalcon/flow/registry.py.
+        from gyrfalcon.flow.registry import discover_flows
+        discover_flows()
+
         # Initialize MCP servers
         initialize_mcp_servers()
 

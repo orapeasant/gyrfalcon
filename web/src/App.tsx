@@ -8,6 +8,7 @@ import {
   BookOpen, Puzzle, Clock, Users, Settings, ScrollText,
   ChevronDown, ChevronRight, Zap, Wrench, Home,
   PanelLeftClose, PanelLeftOpen, AppWindow, Sun, Moon,
+  Workflow, Play, FileCode, Inbox, CalendarClock, Radio,
 } from "lucide-react";
 
 import { ChatPage }      from "./pages/ChatPage";
@@ -25,11 +26,16 @@ import { McpPage }       from "./pages/McpPage";
 import { AgentsPage }    from "./pages/AgentsPage";
 import { ApplicationsManagePage } from "./pages/ApplicationsManagePage";
 import { ApplicationDetailPage }  from "./pages/ApplicationDetailPage";
+import { FlowInstancesPage }   from "./pages/FlowInstancesPage";
+import { FlowDefinitionsPage } from "./pages/FlowDefinitionsPage";
+import { FlowTasksPage }       from "./pages/FlowTasksPage";
+import { FlowDeploymentsPage } from "./pages/FlowDeploymentsPage";
+import { FlowEventsPage }      from "./pages/FlowEventsPage";
 import { api } from "./lib/api";
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 
-type NavItem  = { type: "item";  path: string; label: string; icon: React.ElementType };
+type NavItem  = { type: "item";  path: string; label: string; icon: React.ElementType; badge?: number };
 type NavGroup = { type: "group"; label: string; icon: React.ElementType; items: NavItem[] };
 type NavDef   = NavItem | NavGroup;
 
@@ -37,6 +43,19 @@ const NAV: NavDef[] = [
   { type: "item", path: "/chat",      label: "Chat",      icon: MessageSquare },
   { type: "item", path: "/sessions",  label: "Sessions",  icon: History },
   { type: "item", path: "/analytics", label: "Analytics", icon: BarChart2 },
+  {
+    // Single top-level entry named "Flow" (15-flow.md §14); everything else
+    // nests beneath it. Placed above "AI Engine": flows are a business
+    // capability, not a system setting (§14.2 judgment call #3).
+    type: "group", label: "Flow", icon: Workflow,
+    items: [
+      { type: "item", path: "/flows/instances",   label: "Instances",   icon: Play },
+      { type: "item", path: "/flows/tasks",       label: "My Tasks",    icon: Inbox },
+      { type: "item", path: "/flows/definitions", label: "Definitions", icon: FileCode },
+      { type: "item", path: "/flows/deployments", label: "Deployments", icon: CalendarClock },
+      { type: "item", path: "/flows/events",      label: "Events",      icon: Radio },
+    ],
+  },
   {
     type: "group", label: "AI Engine", icon: Zap,
     items: [
@@ -64,6 +83,8 @@ const PATH_LABELS: Record<string, string> = {
   plugins: "Plugins", scheduler: "Scheduler", profiles: "Profiles",
   config: "Configurations", logs: "Logs",
   applications: "Applications", manage: "Manage",
+  flows: "Flow", instances: "Instances", tasks: "My Tasks", definitions: "Definitions",
+  deployments: "Deployments", events: "Events",
 };
 
 const SIDEBAR_W  = 240;
@@ -176,6 +197,16 @@ const S = {
 
   content: { flex:1, overflow:"hidden", display:"flex", flexDirection:"column" as const } as React.CSSProperties,
 
+  navBadge: {
+    fontSize: "10.5px", fontWeight: 700, color: "#fff", background: "#ef4444",
+    borderRadius: "9px", padding: "1px 6px", minWidth: "16px", textAlign: "center" as const,
+    flexShrink: 0,
+  } as React.CSSProperties,
+  navBadgeDot: {
+    position: "absolute" as const, top: "6px", right: "6px",
+    width: "7px", height: "7px", borderRadius: "50%", background: "#ef4444",
+  } as React.CSSProperties,
+
   // tooltip shown when collapsed
   tooltip: {
     position: "absolute" as const,
@@ -212,7 +243,13 @@ function NavItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
       onMouseLeave={() => setHovered(false)}
     >
       <item.icon size={15} strokeWidth={1.75} style={{ flexShrink: 0 }} />
-      {!collapsed && item.label}
+      {!collapsed && <span style={{ flex: 1 }}>{item.label}</span>}
+      {!collapsed && !!item.badge && (
+        <span style={S.navBadge}>{item.badge}</span>
+      )}
+      {collapsed && !!item.badge && (
+        <span style={S.navBadgeDot} />
+      )}
       {/* Tooltip when collapsed + hovered */}
       {collapsed && hovered && (
         <span style={S.tooltip}>{item.label}</span>
@@ -392,6 +429,31 @@ function ScrollPage({ children }: { children: React.ReactNode }) {
 export function App() {
   const [collapsed, setCollapsed] = useState(false);
 
+  // Badge "My Tasks" with the pending-approval count — per §14.2, this plus the
+  // page itself is the entire discoverability story for human-in-the-loop.
+  const [pendingTaskCount, setPendingTaskCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      api.getFlowTasks()
+        .then((d) => { if (!cancelled) setPendingTaskCount((d.tasks || []).length); })
+        .catch(() => {});
+    };
+    poll();
+    const id = setInterval(poll, 20000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  const navWithBadges: NavDef[] = NAV.map((def) => {
+    if (def.type !== "group" || def.label !== "Flow") return def;
+    return {
+      ...def,
+      items: def.items.map((item) =>
+        item.path === "/flows/tasks" ? { ...item, badge: pendingTaskCount || undefined } : item
+      ),
+    };
+  });
+
   // ── Theme toggle ──────────────────────────────────────────────────────────
   const [isDark, setIsDark] = useState<boolean>(() => {
     const stored = localStorage.getItem("gyrfalcon-theme");
@@ -444,13 +506,13 @@ export function App() {
 
         {/* Navigation */}
         <div style={S.navScroll}>
-          {NAV.slice(0, 3).map((def) =>
+          {navWithBadges.slice(0, 3).map((def) =>
             def.type === "item"
               ? <NavItemLink key={def.path} item={def} collapsed={collapsed} />
               : <NavGroupSection key={def.label} group={def} collapsed={collapsed} />
           )}
           <NavApplicationsSection collapsed={collapsed} />
-          {NAV.slice(3).map((def) =>
+          {navWithBadges.slice(3).map((def) =>
             def.type === "item"
               ? <NavItemLink key={def.path} item={def} collapsed={collapsed} />
               : <NavGroupSection key={def.label} group={def} collapsed={collapsed} />
@@ -532,6 +594,12 @@ export function App() {
             <Route path="/agents"    element={<AgentsPage />} />
             <Route path="/config"    element={<ScrollPage><ConfigPage /></ScrollPage>} />
             <Route path="/scheduler"      element={<SchedulerPage />} />
+            <Route path="/flows"             element={<Navigate to="/flows/instances" replace />} />
+            <Route path="/flows/instances"   element={<ScrollPage><FlowInstancesPage /></ScrollPage>} />
+            <Route path="/flows/tasks"       element={<ScrollPage><FlowTasksPage /></ScrollPage>} />
+            <Route path="/flows/definitions" element={<ScrollPage><FlowDefinitionsPage /></ScrollPage>} />
+            <Route path="/flows/deployments" element={<ScrollPage><FlowDeploymentsPage /></ScrollPage>} />
+            <Route path="/flows/events"      element={<ScrollPage><FlowEventsPage /></ScrollPage>} />
             <Route path="/skills"    element={<SkillsPage />} />
             <Route path="/plugins"   element={<ScrollPage><PluginsPage /></ScrollPage>} />
             <Route path="/profiles"  element={<ScrollPage><ProfilesPage /></ScrollPage>} />

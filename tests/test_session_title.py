@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gyrfalcon.gyrfalcon_state import SessionDB
-from gyrfalcon.run_agent import AIAgent, derive_fallback_title, _clean_title
+from gyrfalcon.run_agent import AIAgent, _clean_title, derive_fallback_title
 
 
 @pytest.fixture()

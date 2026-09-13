@@ -125,6 +125,16 @@ def get_skills_dir() -> Path:
     return d
 
 
+def get_flows_dir() -> Path:
+    """User flow definitions. Drop a .py file with @flow functions in here —
+    no manifest, no registration call. Mirrors get_skills_dir(): a flow, like
+    a skill, is a complete definition on its own, not an extension registered
+    with something else (that's what the plugin system is for)."""
+    d = get_gyrfalcon_home() / "flows"
+    d.mkdir(exist_ok=True)
+    return d
+
+
 def get_optional_skills_dir() -> Path:
     return Path(__file__).parent.parent / "optional_skills"
 
