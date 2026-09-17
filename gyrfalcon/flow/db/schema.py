@@ -240,6 +240,11 @@ AUTH_USERS = Table(
         Column("created_at", "REAL", "NOT NULL"),
         Column("last_login_at", "REAL"),
         Column("disabled", "BOOL", "NOT NULL DEFAULT 0"),
+        # 'human' | 'service'. A service account is an ordinary user row with
+        # credentials and a membership, so it flows through role resolution and
+        # grant enforcement identically — rather than resolving to an anonymous
+        # shared principal that no audit trail can name.
+        Column("kind", "TEXT", "NOT NULL DEFAULT 'human'"),
     ),
     table_constraints=("UNIQUE (issuer, subject)",),
     indexes=(Index("idx_users_email", "auth_users", "email"),),
@@ -255,6 +260,10 @@ AUTH_MEMBERSHIPS = Table(
         Column("org_id", "TEXT", "NOT NULL"),
         Column("roles", "TEXT", "NOT NULL DEFAULT '[]'"),
         Column("created_at", "REAL", "NOT NULL"),
+        # The role this person last selected. Server-side rather than in the
+        # browser: the choice must survive a new device, and a CLIENT fetching
+        # its menu from a SERVER needs the SERVER to already know the answer.
+        Column("active_role", "TEXT"),
     ),
     table_constraints=("PRIMARY KEY (user_id, org_id)",),
     indexes=(Index("idx_memberships_org", "auth_memberships", "org_id"),),
@@ -275,9 +284,19 @@ AUTH_API_KEYS = Table(
         Column("created_at", "REAL", "NOT NULL"),
         Column("last_used_at", "REAL"),
         Column("revoked_at", "REAL"),
+        # Which hashing scheme `key_hash` was produced with. Both the API-key
+        # path and the OAuth service-account path happen to use an unsalted
+        # SHA-256 hex digest today, so migrated credentials verify without a
+        # special case — the column exists so that changing the scheme later is
+        # a migration rather than a flag day.
+        Column("hash_algo", "TEXT", "NOT NULL DEFAULT 'v1'"),
+        # OAuth client id, for credentials belonging to a service account.
+        # NULL for ordinary per-user API keys, which are looked up by `prefix`.
+        Column("client_id", "TEXT"),
     ),
     indexes=(
         Index("idx_api_keys_prefix", "auth_api_keys", "prefix"),
+        Index("idx_api_keys_client", "auth_api_keys", "client_id"),
         Index("idx_api_keys_user", "auth_api_keys", "user_id"),
     ),
 )
@@ -285,7 +304,142 @@ AUTH_API_KEYS = Table(
 AUTH_TABLES = (AUTH_ORGS, AUTH_USERS, AUTH_MEMBERSHIPS, AUTH_API_KEYS)
 
 
-ALL_TABLES = RUN_TABLES + EVENT_TABLES + DEPLOYMENT_TABLES + AUTH_TABLES
+# --------------------------------------------------------------------------
+# navigation & access control (17-users-roles-menus.md)
+#
+# A Role owns one Menu; a Menu resolves recursively to a set of Functions;
+# that set is both the sidebar and the external invoke permission set. These
+# four tables are tenant *configuration* — they carry `tenant_id` and
+# deliberately no `user_id` (see `Scope.tenant_wide`). `nav_pages` is the one
+# exception and is global: a route either shipped in this build or it did not.
+# --------------------------------------------------------------------------
+
+#: One navigable route that exists in this build. Global, not per-tenant — a
+#: tenant does not invent routes, it only grants or withholds them via a Menu.
+#: Keeping this separate from `nav_functions` is what makes a page Function's
+#: target checkable at write time, so a typo'd route is caught by the admin
+#: saving it rather than by a user hitting a 404.
+NAV_PAGES = Table(
+    name="nav_pages",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("key", "TEXT", "NOT NULL UNIQUE"),    # "flow.instances"
+        Column("route", "TEXT", "NOT NULL"),          # "/flows/instances"
+        Column("label", "TEXT", "NOT NULL"),
+        Column("icon", "TEXT"),                        # lucide-react component name
+        Column("enabled", "BOOL", "NOT NULL DEFAULT 1"),
+        Column("created_at", "REAL", "NOT NULL"),
+    ),
+)
+
+#: A thing a menu entry points at, and the unit of authorization for the
+#: external `/v1` surface. The four invocable kinds (flow/agent/skill/mcp) are
+#: exactly the REST gateway's four resource types; `page` is nav-only and
+#: never authorizes an invoke.
+NAV_FUNCTIONS = Table(
+    name="nav_functions",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("key", "TEXT", "NOT NULL"),            # stable public handle
+        Column("name", "TEXT", "NOT NULL"),
+        Column("icon", "TEXT"),
+        Column("kind", "TEXT", "NOT NULL"),           # page|code|skill|agent|mcp|flow
+        Column("target", "TEXT", "NOT NULL"),         # meaning depends on kind
+        Column("params", "TEXT"),                      # JSON; defaults for invocable kinds
+        Column("enabled", "BOOL", "NOT NULL DEFAULT 1"),
+        Column("active_from", "REAL"),
+        Column("active_to", "REAL"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("updated_at", "REAL", "NOT NULL"),
+        Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+    ),
+    table_constraints=("UNIQUE (tenant_id, key)",),
+    indexes=(Index("idx_functions_tenant", "nav_functions", "tenant_id"),),
+)
+
+NAV_MENUS = Table(
+    name="nav_menus",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("name", "TEXT", "NOT NULL"),
+        Column("icon", "TEXT"),
+        Column("enabled", "BOOL", "NOT NULL DEFAULT 1"),
+        Column("active_from", "REAL"),                 # NULL = no lower bound
+        Column("active_to", "REAL"),                   # NULL = no upper bound
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("updated_at", "REAL", "NOT NULL"),
+        Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+    ),
+    indexes=(Index("idx_nav_menus_tenant", "nav_menus", "tenant_id"),),
+)
+
+#: A leaf (references a Function) or a branch (references another Menu, whole).
+#: Exactly one of `function_id` / `ref_menu_id` is set — enforced in the store
+#: rather than as a CHECK constraint, to keep one SQL dialect serving both
+#: backends (§15.3a).
+NAV_MENU_ITEMS = Table(
+    name="nav_menu_items",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("menu_id", "TEXT", "NOT NULL"),         # the owning Menu
+        Column("sort_order", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("function_id", "TEXT"),                  # leaf
+        Column("ref_menu_id", "TEXT"),                  # branch
+        Column("access", "TEXT", "NOT NULL DEFAULT 'write'"),   # 'read' | 'write'
+        Column("label_override", "TEXT"),
+        Column("icon_override", "TEXT"),
+        Column("enabled", "BOOL", "NOT NULL DEFAULT 1"),
+        Column("active_from", "REAL"),
+        Column("active_to", "REAL"),
+        Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+    ),
+    indexes=(
+        Index("idx_menu_items_menu", "nav_menu_items", "menu_id"),
+        Index("idx_menu_items_function", "nav_menu_items", "function_id"),
+        Index("idx_menu_items_ref", "nav_menu_items", "ref_menu_id"),
+    ),
+)
+
+#: A named bundle of access carrying exactly one Menu. `name` matches a string
+#: a Principal already carries in `auth_memberships.roles`, which is what turns
+#: that free-form string into a resolvable tree.
+AUTH_ROLES = Table(
+    name="auth_roles",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("name", "TEXT", "NOT NULL"),
+        Column("label", "TEXT"),                        # shown in the role switcher
+        Column("menu_id", "TEXT"),                       # NULL = grants no nav
+        Column("enabled", "BOOL", "NOT NULL DEFAULT 1"),
+        Column("active_from", "REAL"),
+        Column("active_to", "REAL"),
+        Column("description", "TEXT"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+    ),
+    table_constraints=("UNIQUE (tenant_id, name)",),
+    indexes=(Index("idx_roles_tenant", "auth_roles", "tenant_id"),),
+)
+
+#: Bumped on every write to any nav_* / auth_roles row in a tenant, in the same
+#: transaction as the write. The grant cache compares this integer instead of
+#: re-walking a menu tree, so a revoked role takes effect on the next request
+#: across every process rather than after a TTL.
+NAV_VERSIONS = Table(
+    name="nav_versions",
+    columns=(
+        Column("tenant_id", "TEXT", "PRIMARY KEY"),
+        Column("version", "INTEGER", "NOT NULL DEFAULT 1"),
+        Column("updated_at", "REAL", "NOT NULL"),
+    ),
+)
+
+NAV_TABLES = (NAV_PAGES, NAV_FUNCTIONS, NAV_MENUS, NAV_MENU_ITEMS,
+              AUTH_ROLES, NAV_VERSIONS)
+
+
+ALL_TABLES = (RUN_TABLES + EVENT_TABLES + DEPLOYMENT_TABLES + AUTH_TABLES
+              + NAV_TABLES)
 
 
 def render(tables: Sequence[Table], dialect: "Dialect") -> list[str]:

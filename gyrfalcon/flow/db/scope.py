@@ -20,7 +20,7 @@ greppable and reviewable instead of indistinguishable from a forgotten filter.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional, Sequence
 
 from gyrfalcon.identity import Principal, require_principal
@@ -66,6 +66,29 @@ class Scope:
     @property
     def is_system(self) -> bool:
         return self.tenant_id is None
+
+    def tenant_wide(self) -> "Scope":
+        """Drop the owner narrowing, keep the tenant (§17.5, 17-users-roles-menus §2).
+
+        For tables that hold tenant *configuration* rather than user-owned
+        rows — `nav_menus`, `nav_functions`, `nav_menu_items`, `auth_roles`.
+        Those have a `tenant_id` and deliberately no `user_id`: a menu is not
+        owned by whoever happened to create it, it belongs to the org, and
+        every member resolves the same one. Without this, `Scope.of()` for a
+        non-operator emits `AND user_id = ?` against a column that does not
+        exist, and the read fails.
+
+        The alternative — adding a `user_id` column to those tables to satisfy
+        this helper — was rejected: it would model the data around the shape of
+        a filter, and invite the bug where a user can only see menus they
+        authored.
+
+        This widens owner → tenant. It never widens across tenants; the
+        tenant predicate is untouched. Call sites do not choose it — the nav
+        SQL builders apply it, so "which tables are tenant-wide" is a property
+        of the table rather than something each query remembers.
+        """
+        return replace(self, user_id=None)
 
     def predicate(self, table: str = "") -> tuple[list[str], list[Any]]:
         """SQL fragments and bound values for this scope.

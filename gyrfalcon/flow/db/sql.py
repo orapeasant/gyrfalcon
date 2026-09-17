@@ -414,3 +414,243 @@ REVOKE_API_KEY = "UPDATE auth_api_keys SET revoked_at = ? WHERE id = ?"
 LIST_API_KEYS = (
     "SELECT * FROM auth_api_keys WHERE user_id = ? ORDER BY created_at DESC"
 )
+
+
+# ==========================================================================
+# navigation & access control  (17-users-roles-menus.md)
+#
+# `nav_pages` is global — a route either shipped in this build or it did not —
+# so its reads are plain constants. The other four tables are tenant
+# configuration and their reads are builders taking a `Scope`, which the
+# mechanical test in `tests/flow/test_scope.py` enforces.
+#
+# Every builder here narrows with `scope.tenant_wide()`: these tables carry a
+# `tenant_id` and deliberately no `user_id`, so the owner half of an ordinary
+# scope would reference a column that does not exist. Applying it *here*
+# rather than at each call site makes "which tables are tenant-wide" a
+# property of the table.
+# ==========================================================================
+
+# -- pages (global) --------------------------------------------------------
+
+PAGE_COLUMNS = ("id", "key", "route", "label", "icon", "enabled", "created_at")
+
+INSERT_PAGE = """
+    INSERT INTO nav_pages (id, key, route, label, icon, enabled, created_at)
+    VALUES (?,?,?,?,?,?,?)
+"""
+GET_PAGE = "SELECT * FROM nav_pages WHERE id = ?"
+GET_PAGE_BY_KEY = "SELECT * FROM nav_pages WHERE key = ?"
+LIST_PAGES = "SELECT * FROM nav_pages ORDER BY key"
+UPDATE_PAGE = (
+    "UPDATE nav_pages SET route = ?, label = ?, icon = ?, enabled = ? WHERE id = ?"
+)
+DELETE_PAGE = "DELETE FROM nav_pages WHERE id = ?"
+
+
+def insert_page(d: "Dialect") -> str:
+    """Seeding re-runs on every start, so a page that already exists is a
+    no-op rather than a duplicate-key failure."""
+    return d.insert_ignore("nav_pages", PAGE_COLUMNS, conflict="key")
+
+
+# -- functions -------------------------------------------------------------
+
+FUNCTION_COLUMNS = (
+    "id", "key", "name", "icon", "kind", "target", "params", "enabled",
+    "active_from", "active_to", "created_at", "updated_at", "tenant_id",
+)
+
+
+def insert_function(d: "Dialect") -> str:
+    return d.insert_ignore("nav_functions", FUNCTION_COLUMNS,
+                           conflict="tenant_id, key")
+
+
+def get_function(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return f"SELECT * FROM nav_functions {where}", params
+
+
+def get_function_by_key(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["key = ?"])
+    return f"SELECT * FROM nav_functions {where}", params
+
+
+def list_functions(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide())
+    return f"SELECT * FROM nav_functions {where} ORDER BY name", params
+
+
+def update_function(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return (
+        "UPDATE nav_functions SET name = ?, icon = ?, kind = ?, target = ?, "
+        f"params = ?, enabled = ?, active_from = ?, active_to = ?, updated_at = ? {where}",
+        params,
+    )
+
+
+def delete_function(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return f"DELETE FROM nav_functions {where}", params
+
+
+# -- menus -----------------------------------------------------------------
+
+MENU_COLUMNS = ("id", "name", "icon", "enabled", "active_from", "active_to",
+                "created_at", "updated_at", "tenant_id")
+
+
+def insert_menu(d: "Dialect") -> str:
+    return d.insert_ignore("nav_menus", MENU_COLUMNS, conflict="id")
+
+
+def get_menu(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return f"SELECT * FROM nav_menus {where}", params
+
+
+def list_menus(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide())
+    return f"SELECT * FROM nav_menus {where} ORDER BY name", params
+
+
+def update_menu(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return (
+        "UPDATE nav_menus SET name = ?, icon = ?, enabled = ?, "
+        f"active_from = ?, active_to = ?, updated_at = ? {where}",
+        params,
+    )
+
+
+def delete_menu(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return f"DELETE FROM nav_menus {where}", params
+
+
+# -- menu items ------------------------------------------------------------
+
+MENU_ITEM_COLUMNS = (
+    "id", "menu_id", "sort_order", "function_id", "ref_menu_id", "access",
+    "label_override", "icon_override", "enabled", "active_from", "active_to",
+    "tenant_id",
+)
+
+
+def insert_menu_item(d: "Dialect") -> str:
+    return d.insert_ignore("nav_menu_items", MENU_ITEM_COLUMNS, conflict="id")
+
+
+def get_menu_item(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return f"SELECT * FROM nav_menu_items {where}", params
+
+
+def list_menu_items(scope: "Scope") -> tuple[str, tuple]:
+    """One menu's items, in render order. `sort_order` first, `id` as the
+    tiebreak so two items sharing an order still come back deterministically
+    rather than in whatever order the backend happens to return."""
+    where, params = compose_where(scope.tenant_wide(), ["menu_id = ?"])
+    return f"SELECT * FROM nav_menu_items {where} ORDER BY sort_order, id", params
+
+
+def items_referencing_menu(scope: "Scope") -> tuple[str, tuple]:
+    """Branches pointing at a given menu — for cycle detection and for
+    reporting what would break before a menu is deleted."""
+    where, params = compose_where(scope.tenant_wide(), ["ref_menu_id = ?"])
+    return f"SELECT * FROM nav_menu_items {where}", params
+
+
+def update_menu_item(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return (
+        "UPDATE nav_menu_items SET sort_order = ?, access = ?, "
+        "label_override = ?, icon_override = ?, enabled = ?, "
+        f"active_from = ?, active_to = ? {where}",
+        params,
+    )
+
+
+def set_menu_item_order(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return f"UPDATE nav_menu_items SET sort_order = ? {where}", params
+
+
+def delete_menu_item(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return f"DELETE FROM nav_menu_items {where}", params
+
+
+def delete_items_of_menu(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["menu_id = ?"])
+    return f"DELETE FROM nav_menu_items {where}", params
+
+
+# -- roles -----------------------------------------------------------------
+
+ROLE_COLUMNS = ("id", "name", "label", "menu_id", "enabled", "active_from",
+                "active_to", "description", "created_at", "tenant_id")
+
+
+def insert_role(d: "Dialect") -> str:
+    return d.insert_ignore("auth_roles", ROLE_COLUMNS, conflict="tenant_id, name")
+
+
+def get_role(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return f"SELECT * FROM auth_roles {where}", params
+
+
+def get_role_by_name(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["name = ?"])
+    return f"SELECT * FROM auth_roles {where}", params
+
+
+def list_roles(scope: "Scope") -> tuple[str, tuple]:
+    """Ordered by `label` so §4.1's "first live nav-granting role" fallback is
+    deterministic — two logins must never disagree about which role is
+    active."""
+    where, params = compose_where(scope.tenant_wide())
+    return f"SELECT * FROM auth_roles {where} ORDER BY label, name", params
+
+
+def update_role(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return (
+        "UPDATE auth_roles SET name = ?, label = ?, menu_id = ?, enabled = ?, "
+        f"active_from = ?, active_to = ?, description = ? {where}",
+        params,
+    )
+
+
+def delete_role(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
+    return f"DELETE FROM auth_roles {where}", params
+
+
+# -- the version counter ---------------------------------------------------
+#
+# Keyed by tenant and bumped inside the same transaction as any nav write, so
+# every process invalidates its grant cache on the next request rather than
+# after a TTL. Not a scoped builder: the tenant is the primary key, and the
+# cache asks about exactly one.
+
+GET_NAV_VERSION = "SELECT version FROM nav_versions WHERE tenant_id = ?"
+BUMP_NAV_VERSION = (
+    "UPDATE nav_versions SET version = version + 1, updated_at = ? "
+    "WHERE tenant_id = ?"
+)
+NAV_VERSION_COLUMNS = ("tenant_id", "version", "updated_at")
+
+
+def insert_nav_version(d: "Dialect") -> str:
+    return d.insert_ignore("nav_versions", NAV_VERSION_COLUMNS, conflict="tenant_id")
+
+
+# -- service accounts on auth_api_keys -------------------------------------
+
+FIND_API_KEY_BY_CLIENT_ID = (
+    "SELECT * FROM auth_api_keys WHERE client_id = ? AND revoked_at IS NULL"
+)

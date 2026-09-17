@@ -20,7 +20,13 @@ from _spec import requires, sym
 
 pytestmark = requires("gyrfalcon.flow.db.scope:Scope", section="§17.5 scoping")
 
-OWNED_TABLES = ("flow_runs", "flow_events", "flow_deployments")
+OWNED_TABLES = (
+    "flow_runs", "flow_events", "flow_deployments",
+    # Tenant configuration for navigation/access control. `nav_pages` is
+    # deliberately absent: it is global (a route either shipped or it did
+    # not), so a bare constant read of it is correct rather than a gap.
+    "nav_functions", "nav_menus", "nav_menu_items", "auth_roles",
+)
 
 
 # ── mechanical ───────────────────────────────────────────────────────────────

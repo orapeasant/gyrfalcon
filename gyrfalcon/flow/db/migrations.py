@@ -252,12 +252,63 @@ def _v5_identity(conn: "Connection", dialect: "Dialect") -> None:
     conn.executescript(sch.render(sch.AUTH_TABLES, dialect))
 
 
+# ── v6 — navigation and access control ──────────────────────────────────────
+
+#: Columns this migration adds to tables v5 already created. Additive
+#: `ALTER TABLE ADD COLUMN` with a default, which both backends support without
+#: a rebuild and which backfills existing rows in the same statement.
+_V6_ADDED_COLUMNS = {
+    "auth_users": (("kind", "TEXT", "NOT NULL DEFAULT 'human'"),),
+    "auth_memberships": (("active_role", "TEXT", ""),),
+    "auth_api_keys": (
+        ("hash_algo", "TEXT", "NOT NULL DEFAULT 'v1'"),
+        ("client_id", "TEXT", ""),
+    ),
+}
+
+
+def _v6_navigation(conn: "Connection", dialect: "Dialect") -> None:
+    """Pages, functions, menus, menu items, roles, and the version counter.
+
+    Structure only — **no seed rows**. That is a deliberate departure from a
+    literal reading of the design, and the reason is this module's own rule:
+    a migration is a historical fact and must not change when the schema does.
+    Seed data for the default menus is a transcription of the dashboard's nav,
+    and that nav grows every time a page ships. Embedding it here would force
+    the choice between editing an applied migration (forbidden) and adding one
+    migration per new page (absurd). Seeding is therefore idempotent and lives
+    in `gyrfalcon/nav/seed.py`, guarded on "does this tenant have roles yet",
+    so a fresh install still comes up with a working sidebar.
+
+    `auth_users.kind` defaults to `'human'`, which is the correct reading of
+    every row that predates service accounts having their own identity.
+    """
+    conn.executescript(sch.render(sch.NAV_TABLES, dialect))
+
+    types = dialect.type_map()
+    for table, additions in _V6_ADDED_COLUMNS.items():
+        existing = dialect.column_names(conn, table)
+        if not existing:
+            continue
+        for name, neutral_type, constraints in additions:
+            if name in existing:
+                continue
+            suffix = f" {constraints}" if constraints else ""
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN {name} {types[neutral_type]}{suffix}"
+            )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_api_keys_client ON auth_api_keys(client_id)"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline: flow runs, states, edges, events, deployments", _v1_baseline),
     Migration(2, "flow_run_states keyed on (run_id, seq); drop unused id", _v2_run_states_natural_key),
     Migration(3, "flow_runs.owner_id + heartbeat_at for multi-writer reconciliation", _v3_run_ownership),
     Migration(4, "user_id + tenant_id on runs, events and deployments", _v4_tenancy),
     Migration(5, "identity store: orgs, users, memberships, api keys", _v5_identity),
+    Migration(6, "navigation: pages, functions, menus, items, roles, versions", _v6_navigation),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1].version
