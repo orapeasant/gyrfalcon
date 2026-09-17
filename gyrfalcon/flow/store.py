@@ -396,18 +396,22 @@ class RunStore:
         name: Optional[str] = None,
         kind: Optional[str] = None,
         flow_run_id: Optional[str] = None,
+        created_from: Optional[float] = None,
+        created_to: Optional[float] = None,
         scope: Optional[Scope] = None,
     ) -> tuple[list[dict], int]:
         """Filter by structured predicate. Returns (rows, total)."""
         where, params = self._build_where(
-            current_scope(scope), state_types, name, kind, flow_run_id
+            current_scope(scope), state_types, name, kind, flow_run_id, created_from, created_to
         )
         with self._db.connect() as conn:
             rows = conn.fetchall(sql.list_runs(where), (*params, limit, offset))
             total = conn.fetchone(sql.count_runs(where), params)["c"]
         return [self._row_to_run(r) for r in rows], total
 
-    def _build_where(self, scope, state_types, name, kind, flow_run_id) -> tuple[str, tuple]:
+    def _build_where(
+        self, scope, state_types, name, kind, flow_run_id, created_from=None, created_to=None
+    ) -> tuple[str, tuple]:
         """Collect this query's own filters; `compose_where` adds the scope.
 
         The WHERE string is never assembled here — that happens in exactly one
@@ -427,6 +431,12 @@ class RunStore:
         if flow_run_id:
             clauses.append("flow_run_id = ?")
             params.append(flow_run_id)
+        if created_from is not None:
+            clauses.append("created_at >= ?")
+            params.append(created_from)
+        if created_to is not None:
+            clauses.append("created_at <= ?")
+            params.append(created_to)
         where, scope_params = sql.compose_where(scope, clauses)
         return where, (*scope_params, *params)
 
@@ -517,6 +527,29 @@ class RunStore:
             return run
         self.record_transition(run_id, st.Cancelling(message="cancellation requested"))
         return self.get_run(run_id)
+
+    def delete_run(self, run_id: str, scope: Optional[Scope] = None) -> Optional[bool]:
+        """Removes a finished run's row and its history/edges.
+
+        Returns `None` if the run does not exist, `False` if it is still
+        active (delete refuses the way `request_cancel` refuses a terminal
+        run — an in-flight run's own engine still writes transitions against
+        this id, so removing the row out from under it would surface as a
+        confusing write-to-nothing rather than a clean cancellation), and
+        `True` once removed.
+        """
+        run = self.get_run(run_id, scope)
+        if run is None:
+            return None
+        if not run["is_final"]:
+            return False
+        scoped = current_scope(scope)
+        stmt, sp = sql.delete_run(scoped)
+        with self._db.connect() as conn:
+            conn.execute(sql.DELETE_HISTORY, (run_id,))
+            conn.execute(sql.DELETE_EDGES_FOR, (run_id, run_id))
+            conn.execute(stmt, (*sp, run_id))
+        return True
 
     def _row_to_run(self, row: Mapping[str, Any]) -> dict:
         return {

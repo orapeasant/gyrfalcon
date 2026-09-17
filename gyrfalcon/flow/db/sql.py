@@ -208,6 +208,13 @@ def count_runs(where: str) -> str:
     return f"SELECT COUNT(*) AS c FROM flow_runs {where}"
 
 
+def delete_run(scope: "Scope") -> tuple[str, tuple]:
+    """Scoped for the same reason `get_run` is (§17.5): a delete by bare id
+    would let one tenant's request remove another tenant's row."""
+    where, params = compose_where(scope, ["id = ?"])
+    return f"DELETE FROM flow_runs {where}", params
+
+
 # ==========================================================================
 # flow_run_states — the transition audit trail
 # ==========================================================================
@@ -221,6 +228,7 @@ INSERT_RUN_STATE = """
 """
 
 GET_HISTORY = "SELECT * FROM flow_run_states WHERE run_id = ? ORDER BY seq"
+DELETE_HISTORY = "DELETE FROM flow_run_states WHERE run_id = ?"
 
 
 # ==========================================================================
@@ -238,6 +246,9 @@ def insert_edge(d: "Dialect") -> str:
 
 def edges_for(n_ids: int) -> str:
     return f"SELECT * FROM flow_run_edges WHERE downstream IN ({placeholders(n_ids)})"
+
+
+DELETE_EDGES_FOR = "DELETE FROM flow_run_edges WHERE downstream = ? OR upstream = ?"
 
 
 # ==========================================================================

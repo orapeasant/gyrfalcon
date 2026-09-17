@@ -52,6 +52,19 @@ def _apply_profile_override():
     os.environ.setdefault("GYRFALCON_HOME", str(Path.home() / ".gyrfalcon"))
 
 
+def _apply_run_mode(cli_run_mode: str | None) -> None:
+    """Resolves RUN_MODE, `.env` taking priority over `--server`/`--client`.
+
+    Called after the .env files are loaded, so by this point `RUN_MODE` is
+    already in `os.environ` if a `.env` set it — `setdefault` then leaves it
+    untouched, which is what makes `.env` win and the CLI flag a no-op in
+    that case. With no `.env` value and no flag either, RUN_MODE stays unset
+    and `get_run_mode()` falls back to its own default ("CLIENT").
+    """
+    if cli_run_mode:
+        os.environ.setdefault("RUN_MODE", cli_run_mode)
+
+
 def main():
     """Main entry point for `gyrfalcon` command."""
     logger.debug("Beginning of main")
@@ -81,6 +94,17 @@ def main():
     parser.add_argument("--checkpoints", action="store_true", help="Enable checkpoints")
     parser.add_argument("--toolsets", nargs="*", help="Enable specific toolsets")
     parser.add_argument("--quiet", "-q", action="store_true", help="Quiet mode")
+    run_mode_group = parser.add_mutually_exclusive_group()
+    run_mode_group.add_argument(
+        "--server", action="store_const", dest="run_mode", const="SERVER",
+        help="Run in SERVER mode (multi-user; DB backend follows flow.store.* config). "
+             "Ignored if RUN_MODE is set in .env.",
+    )
+    run_mode_group.add_argument(
+        "--client", action="store_const", dest="run_mode", const="CLIENT",
+        help="Run in CLIENT mode (single-user; always local SQLite). Default. "
+             "Ignored if RUN_MODE is set in .env.",
+    )
 
     subparsers = parser.add_subparsers(dest="command")
 
@@ -109,6 +133,7 @@ def main():
     sub_models.add_argument("--provider", help="Filter by provider name")
 
     args = parser.parse_args()
+    _apply_run_mode(args.run_mode)
 
     # Setup logging
     from gyrfalcon.gyrfalcon_logging import setup_logging

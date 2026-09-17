@@ -35,6 +35,31 @@ def get_app_name() -> str:
     return os.environ.get("GYRFALCON_APP_NAME", DEFAULT_APP_NAME)
 
 
+RUN_MODES = ("SERVER", "CLIENT")
+DEFAULT_RUN_MODE = "CLIENT"
+
+
+def get_run_mode() -> str:
+    """"SERVER" or "CLIENT" — resolved once, from `RUN_MODE`.
+
+    `RUN_MODE` is set into the environment before this is ever called: a
+    `.env` value is loaded as-is (and, per `main.py`'s `_apply_run_mode`,
+    always wins), while `--server`/`--client` only fill it in when `.env`
+    left it unset. Reading `os.environ` here rather than threading a mode
+    argument through every caller keeps the two entry points (CLI args,
+    `.env`) collapsed onto the one place everything downstream — DB backend
+    selection today, more later — actually reads from.
+
+    Defaults to "CLIENT" (SQLite-only, single-user) on an unset or invalid
+    value, since that is the historical, zero-configuration behavior this
+    flag must not change for anyone who never sets it.
+    """
+    raw = os.environ.get("RUN_MODE", "").strip().upper()
+    if raw in RUN_MODES:
+        return raw
+    return DEFAULT_RUN_MODE
+
+
 def is_frozen() -> bool:
     """True when running from a PyInstaller bundle."""
     import sys
@@ -167,6 +192,22 @@ def get_applications_file() -> Path:
 
 def get_agents_file() -> Path:
     return get_gyrfalcon_home() / "agents.json"
+
+
+def get_security_dir() -> Path:
+    """Administration > Security page storage — kept in its own subfolder,
+    same as skills/flows/mcp already are, rather than flat in Gyrfalcon Home."""
+    d = get_gyrfalcon_home() / "security"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def get_service_accounts_file() -> Path:
+    return get_security_dir() / "service_accounts.json"
+
+
+def get_secrets_store_file() -> Path:
+    return get_security_dir() / "secrets.json"
 
 
 def get_skillshub_file() -> Path:

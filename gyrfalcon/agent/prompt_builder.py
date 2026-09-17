@@ -58,6 +58,7 @@ def build_environment_hints() -> str:
 
     cwd = os.getcwd()
     parts.append(f"Working Directory: {cwd}")
+    parts.append(f"Gyrfalcon Home: {get_gyrfalcon_home()}")
 
     now = datetime.datetime.now()
     parts.append(f"Date: {now.strftime('%Y-%m-%d %H:%M %Z')}")
@@ -66,6 +67,39 @@ def build_environment_hints() -> str:
     parts.append(f"User: {user}")
 
     return "\n".join(parts)
+
+
+def build_workspace_policy() -> str:
+    """Strict rule: never write into the codebase you're reading.
+
+    `Working Directory` above is whatever project or codebase the user
+    pointed the session at — reading it is the whole point of being there.
+    This is the rule that stops the agent from also treating it as scratch
+    space for its own output.
+    """
+    logger.debug("Beginning of build_workspace_policy")
+    home = get_gyrfalcon_home()
+    return (
+        "## Workspace Boundaries\n\n"
+        "**Never create, edit, delete, or otherwise modify files inside the codebase "
+        "or project folder you are working in (the `Working Directory` above, or any "
+        "path a user or tool points you at outside Gyrfalcon Home). Reading files "
+        "there is always fine and expected — this rule is about writes only.**\n\n"
+        f"Any file *you* produce as part of doing a task — generated code, scripts, "
+        f"downloaded content, reports, notes, working files of any kind — belongs "
+        f"under Gyrfalcon Home instead: `{home}` (the `GYRFALCON_HOME` environment "
+        f"variable, defaulting to `~/.gyrfalcon`). Never write it into the codebase, "
+        f"even temporarily, even if the user's request is *about* that codebase.\n\n"
+        "Group what you write under Gyrfalcon Home into subfolders by purpose rather "
+        "than dropping everything flat in its root — for example a subfolder per task, "
+        "topic, or output type (scripts, reports, downloads, ...), the same way "
+        "Gyrfalcon's own subsystems already keep `skills/`, `flows/`, and `sandboxes/` "
+        "separate. Create a subfolder before writing into it if one doesn't exist yet.\n\n"
+        "This rule is strict and has no task-specific exception: even a request that is "
+        "explicitly about editing the codebase does not authorize writing into it — "
+        "produce the change (patch, file, script) under Gyrfalcon Home instead and tell "
+        "the user where it is, rather than applying it to the codebase directly."
+    )
 
 
 def build_skills_system_prompt(
@@ -260,6 +294,9 @@ def build_system_prompt(
 
     # 2. Environment hints
     parts.append(f"## Environment\n\n{build_environment_hints()}")
+
+    # 2b. Workspace boundaries — strict, always included
+    parts.append(build_workspace_policy())
 
     # 3. Memory guidance
     if not skip_memory and memory_guidance:

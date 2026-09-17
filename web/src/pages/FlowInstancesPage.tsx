@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   Play, ChevronRight, ChevronDown, RefreshCw, XCircle,
-  CheckCircle, AlertCircle, Clock3, Ban, Loader2,
+  CheckCircle, AlertCircle, Clock3, Ban, Loader2, RotateCcw, Trash2,
 } from "lucide-react";
 import { api } from "../lib/api";
 
@@ -85,6 +85,26 @@ const S = {
     fontSize: "11.5px", fontWeight: 600, color,
   }),
   cancelBtn: { fontSize: "11px", padding: "3px 9px", borderRadius: "5px", border: "1px solid #ef4444", color: "#ef4444", background: "transparent", cursor: "pointer" } as React.CSSProperties,
+  actionBtn: (color: string): React.CSSProperties => ({
+    fontSize: "11px", padding: "3px 9px", borderRadius: "5px", border: `1px solid ${color}`,
+    color, background: "transparent", cursor: "pointer", display: "inline-flex",
+    alignItems: "center", gap: "3px",
+  }),
+  actions: { display: "flex", gap: "6px", justifyContent: "flex-end" } as React.CSSProperties,
+  searchRow: { display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px", flexWrap: "wrap" as const },
+  input: {
+    fontSize: "12.5px", padding: "5px 10px", borderRadius: "6px",
+    border: "1px solid var(--border)", background: "var(--input-bg)", color: "var(--fg)",
+  } as React.CSSProperties,
+  dateInput: {
+    fontSize: "12.5px", padding: "5px 8px", borderRadius: "6px",
+    border: "1px solid var(--border)", background: "var(--input-bg)", color: "var(--fg)",
+  } as React.CSSProperties,
+  bulkBar: {
+    display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px",
+    padding: "6px 10px", borderRadius: "6px", background: "var(--sidebar-active)",
+    fontSize: "12.5px",
+  } as React.CSSProperties,
   detail:  { background: "var(--card)", borderTop: "1px solid var(--border)", padding: "14px 20px" } as React.CSSProperties,
   histRow: { display: "flex", gap: "10px", fontSize: "12px", padding: "3px 0", color: "var(--fg-muted)" } as React.CSSProperties,
   pre:     { margin: "6px 0 0", padding: "8px 10px", fontSize: "11.5px", fontFamily: "monospace", background: "var(--input-bg)", border: "1px solid var(--border)", borderRadius: "6px", whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const, maxHeight: "220px", overflow: "auto" },
@@ -102,28 +122,44 @@ export function FlowInstancesPage() {
   const [runs, setRuns] = useState<FlowRun[]>([]);
   const [total, setTotal] = useState(0);
   const [filterIdx, setFilterIdx] = useState(0);
+  const [nameQuery, setNameQuery] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [history, setHistory] = useState<Record<string, HistoryEntry[] | "loading" | "error">>({});
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // Local midnight, so a picked date covers that whole calendar day
+      // regardless of the viewer's timezone offset from UTC.
+      const created_from = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() / 1000 : null;
+      const created_to = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() / 1000 : null;
       const d = await api.filterFlowRuns({
         limit: PAGE_SIZE,
         offset: 0,
         state_types: FILTERS[filterIdx].states,
         kind: "flow", // top-level view — task detail lives in the flow's graph
+        name: nameQuery.trim() || null,
+        created_from,
+        created_to,
       });
       setRuns(d.runs || []);
       setTotal(d.total ?? 0);
+      setSelected(new Set());
     } catch {
       setRuns([]);
     }
     setLoading(false);
-  }, [filterIdx]);
+  }, [filterIdx, nameQuery, dateFrom, dateTo]);
 
-  useEffect(() => { load(); }, [load]);
+  // Debounced so the name search doesn't fire a request per keystroke.
+  useEffect(() => {
+    const t = setTimeout(load, 300);
+    return () => clearTimeout(t);
+  }, [load]);
 
   async function toggle(runId: string) {
     if (expanded === runId) { setExpanded(null); return; }
@@ -145,11 +181,76 @@ export function FlowInstancesPage() {
     load();
   }
 
+  async function retry(e: React.MouseEvent, runId: string) {
+    e.stopPropagation();
+    try {
+      await api.retryFlowRun(runId);
+      load();
+    } catch (err: any) {
+      alert(err.message || "Failed to retry run");
+    }
+  }
+
+  async function deleteOne(e: React.MouseEvent, runId: string) {
+    e.stopPropagation();
+    if (!confirm("Delete this flow run? This cannot be undone.")) return;
+    try {
+      await api.deleteFlowRun(runId);
+      load();
+    } catch (err: any) {
+      alert(err.message || "Failed to delete run");
+    }
+  }
+
+  async function deleteSelected() {
+    if (selected.size === 0) return;
+    if (!confirm(`Delete ${selected.size} selected run(s)? This cannot be undone.`)) return;
+    const res = await api.deleteFlowRuns(Array.from(selected));
+    if (res.refused?.length) {
+      alert(`${res.refused.length} run(s) are still active and were not deleted; cancel them first.`);
+    }
+    load();
+  }
+
+  function toggleRow(runId: string) {
+    setSelected((p) => {
+      const next = new Set(p);
+      if (next.has(runId)) next.delete(runId); else next.add(runId);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected((p) => (p.size === runs.length ? new Set() : new Set(runs.map((r) => r.id))));
+  }
+
   return (
     <div style={S.page}>
       <div style={S.head}>
         <h1 style={S.h1}>Flow Instances</h1>
         <span style={{ fontSize: "12px", color: "var(--fg-muted)" }}>{total}</span>
+      </div>
+
+      <div style={S.searchRow}>
+        <input
+          style={{ ...S.input, minWidth: "220px" }}
+          type="text"
+          placeholder="Search by name…"
+          value={nameQuery}
+          onChange={(e) => setNameQuery(e.target.value)}
+        />
+        <span style={{ fontSize: "11.5px", color: "var(--fg-muted)" }}>from</span>
+        <input style={S.dateInput} type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        <span style={{ fontSize: "11.5px", color: "var(--fg-muted)" }}>to</span>
+        <input style={S.dateInput} type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        {(nameQuery || dateFrom || dateTo) && (
+          <button
+            onClick={() => { setNameQuery(""); setDateFrom(""); setDateTo(""); }}
+            style={{ background: "transparent", border: "none", color: "var(--fg-muted)", cursor: "pointer", fontSize: "11.5px" }}
+          >
+            Clear
+          </button>
+        )}
         <div style={S.filters}>
           {FILTERS.map((f, i) => (
             <button key={f.label} style={S.filterBtn(i === filterIdx)} onClick={() => setFilterIdx(i)}>
@@ -165,6 +266,21 @@ export function FlowInstancesPage() {
         </button>
       </div>
 
+      {selected.size > 0 && (
+        <div style={S.bulkBar}>
+          <span>{selected.size} selected</span>
+          <button style={S.actionBtn("#ef4444")} onClick={deleteSelected}>
+            <Trash2 size={11} /> Delete selected
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            style={{ background: "transparent", border: "none", color: "var(--fg-muted)", cursor: "pointer", fontSize: "11.5px", marginLeft: "auto" }}
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div style={S.empty}>Loading…</div>
       ) : runs.length === 0 ? (
@@ -174,6 +290,14 @@ export function FlowInstancesPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
+                <th style={{ ...S.th, width: "30px" }}>
+                  <input
+                    type="checkbox"
+                    checked={runs.length > 0 && selected.size === runs.length}
+                    onChange={toggleAll}
+                    aria-label="Select all"
+                  />
+                </th>
                 <th style={S.th}></th>
                 <th style={S.th}>Name</th>
                 <th style={S.th}>State</th>
@@ -191,6 +315,14 @@ export function FlowInstancesPage() {
                 return (
                   <React.Fragment key={r.id}>
                     <tr style={S.row} onClick={() => toggle(r.id)}>
+                      <td style={{ ...S.td, width: "30px" }} onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(r.id)}
+                          onChange={() => toggleRow(r.id)}
+                          aria-label={`Select ${r.name}`}
+                        />
+                      </td>
                       <td style={{ ...S.td, width: "28px" }}>
                         {isOpen ? <ChevronDown size={14} style={S.chevron} /> : <ChevronRight size={14} style={S.chevron} />}
                       </td>
@@ -204,17 +336,29 @@ export function FlowInstancesPage() {
                       <td style={S.td}>{fmtDate(r.started_at)}</td>
                       <td style={S.td}>{fmtDuration(r.started_at, r.finished_at)}</td>
                       <td style={S.td}>
-                        {!r.is_final && (
-                          <button style={S.cancelBtn} onClick={(e) => cancel(e, r.id)}>
-                            <XCircle size={11} style={{ marginRight: "3px", verticalAlign: "-2px" }} />
-                            Cancel
-                          </button>
-                        )}
+                        <div style={S.actions}>
+                          {!r.is_final && (
+                            <button style={S.cancelBtn} onClick={(e) => cancel(e, r.id)}>
+                              <XCircle size={11} style={{ marginRight: "3px", verticalAlign: "-2px" }} />
+                              Cancel
+                            </button>
+                          )}
+                          {r.is_final && (
+                            <>
+                              <button style={S.actionBtn("#456DE6")} onClick={(e) => retry(e, r.id)}>
+                                <RotateCcw size={11} /> Retry
+                              </button>
+                              <button style={S.actionBtn("#ef4444")} onClick={(e) => deleteOne(e, r.id)}>
+                                <Trash2 size={11} /> Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={6} style={{ padding: 0 }}>
+                        <td colSpan={7} style={{ padding: 0 }}>
                           <div style={S.detail}>
                             {r.error != null && (
                               <>

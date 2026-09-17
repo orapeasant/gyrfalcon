@@ -8,7 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import {
   Plus, Trash2, X, Play, RefreshCw, Copy, Eye, EyeOff,
-  ExternalLink, Globe, Edit2,
+  ExternalLink, Globe, Edit2, Users,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -214,7 +214,7 @@ function AgentCard({ agent, onInvoke, onEdit, onDelete, onCopy }: {
           <span key={t} style={{ fontSize: "0.72rem", padding: "1px 7px", borderRadius: "10px", background: "var(--sidebar-active)", color: "var(--fg-muted)", border: "1px solid var(--border)" }}>🔧 {t}</span>
         ))}
         {agent.model && (
-          <span style={{ fontSize: "0.72rem", padding: "1px 7px", borderRadius: "10px", background: "var(--sidebar-active)", color: "var(--fg-muted)", border: "1px solid var(--border)" }}>🤖 {agent.model}</span>
+          <span style={{ fontSize: "0.72rem", padding: "1px 7px", borderRadius: "10px", background: "var(--sidebar-active)", color: "var(--fg-muted)", border: "1px solid var(--border)" }}>{agent.model}</span>
         )}
       </div>
 
@@ -518,8 +518,8 @@ export function AgentsPage() {
           {loading && <div style={{ color: "var(--fg-muted)" }}>Loading…</div>}
           {!loading && agents.length === 0 && (
             <div style={{ textAlign: "center", color: "var(--fg-muted)", padding: "3rem 0" }}>
-              <div style={{ fontSize: "2.5rem", opacity: 0.3, marginBottom: "0.5rem" }}>🤖</div>
-              No agents yet. Click <strong>New Agent</strong> to create one.
+              <Users size={40} strokeWidth={1.5} style={{ opacity: 0.3, marginBottom: "0.5rem" }} />
+              <div>No agents yet. Click <strong>New Agent</strong> to create one.</div>
             </div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1rem" }}>
@@ -557,7 +557,7 @@ export function AgentsPage() {
             marginBottom: "1.25rem", flexWrap: "wrap",
           }}>
             <span style={{ fontWeight: 700, fontSize: "0.95rem", flex: 1 }}>
-              {creating ? "✨ New Agent" : `🤖 ${selected?.name}`}
+              {creating ? "New Agent" : selected?.name}
             </span>
             {!creating && selected && (
               deleteConfirm === selected.id ? (

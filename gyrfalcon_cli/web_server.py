@@ -79,9 +79,25 @@ def _verify_token(request: Request):
         return _bind_request_principal(request)
 
     token = request.headers.get("X-Gyrfalcon-Session-Token")
-    if token != _session_token:
-        raise HTTPException(status_code=401, detail="Invalid session token")
-    return _bind_request_principal(request)
+    if token == _session_token:
+        return _bind_request_principal(request)
+
+    # A Service Account's OAuth2 access token (Administration > Security) is
+    # a second valid credential here even with per-user identity off — this
+    # is what actually lets an external application call the API without
+    # ever holding the shared dashboard token. Checked before rejecting, not
+    # inside `_bind_request_principal`, because that function runs only
+    # *after* this gate already passed for the X-Gyrfalcon-Session-Token
+    # case above — an OAuth caller has no session token to pass that gate
+    # with.
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        from gyrfalcon.security import validate_access_token
+
+        if validate_access_token(auth_header[7:].strip()) is not None:
+            return _bind_request_principal(request)
+
+    raise HTTPException(status_code=401, detail="Invalid session token")
 
 
 def _bind_request_principal(request: Request):
@@ -114,11 +130,22 @@ def _resolve_principal(request: Request):
 
     header = request.headers.get("Authorization", "")
     if header.startswith("Bearer "):
+        token = header[7:].strip()
         from gyrfalcon.auth.store import get_auth_store
 
-        principal = get_auth_store().authenticate_api_key(header[7:].strip())
+        principal = get_auth_store().authenticate_api_key(token)
         if principal is not None:
             return principal
+
+        # A Service Account's OAuth2 access token (Administration > Security).
+        # Resolves to LOCAL, same as the shared dashboard token below — a
+        # service account is not yet a distinct principal type, it's another
+        # way to prove "an operator of this install" for a non-interactive
+        # caller.
+        from gyrfalcon.security import validate_access_token
+
+        if validate_access_token(token) is not None:
+            return identity.LOCAL
 
     from gyrfalcon.auth.session import COOKIE_NAME, get_session_store
 
@@ -1638,6 +1665,128 @@ async def toggle_application(request: Request, app_id: str, body: ToggleRequest)
     raise HTTPException(404, "Application not found")
 
 
+# --- Security: Service Accounts (Administration > Security) ---
+
+class ServiceAccountCreate(BaseModel):
+    name: str
+    scopes: list[str] = []
+
+
+@app.get("/api/security/service-accounts")
+async def list_service_accounts(request: Request):
+    _verify_token(request)
+    from gyrfalcon.security import load_service_accounts, public_service_account
+    return {"service_accounts": [public_service_account(a) for a in load_service_accounts()]}
+
+
+@app.post("/api/security/service-accounts")
+async def create_service_account_endpoint(request: Request, body: ServiceAccountCreate):
+    """The response's `client_secret` is shown to the caller exactly once —
+    it is never recoverable again, only rotated."""
+    _verify_token(request)
+    from gyrfalcon.security import create_service_account
+    account, client_secret = create_service_account(body.name, body.scopes)
+    return {**account, "client_secret": client_secret}
+
+
+@app.post("/api/security/service-accounts/{account_id}/rotate")
+async def rotate_service_account_endpoint(request: Request, account_id: str):
+    _verify_token(request)
+    from gyrfalcon.security import rotate_service_account_secret
+    client_secret = rotate_service_account_secret(account_id)
+    if client_secret is None:
+        raise HTTPException(404, "Service account not found")
+    return {"client_secret": client_secret}
+
+
+@app.post("/api/security/service-accounts/{account_id}/toggle")
+async def toggle_service_account_endpoint(request: Request, account_id: str, body: ToggleRequest):
+    _verify_token(request)
+    from gyrfalcon.security import set_service_account_enabled
+    account = set_service_account_enabled(account_id, body.enabled)
+    if account is None:
+        raise HTTPException(404, "Service account not found")
+    return account
+
+
+@app.delete("/api/security/service-accounts/{account_id}")
+async def delete_service_account_endpoint(request: Request, account_id: str):
+    _verify_token(request)
+    from gyrfalcon.security import delete_service_account
+    if not delete_service_account(account_id):
+        raise HTTPException(404, "Service account not found")
+    return {"ok": True}
+
+
+class OAuthTokenRequest(BaseModel):
+    grant_type: str = "client_credentials"
+    client_id: str
+    client_secret: str
+
+
+@app.post("/api/oauth/token")
+async def issue_oauth_token(body: OAuthTokenRequest):
+    """The endpoint a Service Account's owning application actually calls —
+    no dashboard session token required, since the whole point is letting an
+    external app authenticate on its own. RFC 6749 §4.4 client-credentials
+    grant, minus refresh tokens (a client just re-authenticates when the
+    access token expires — it already holds the credential that grants one)."""
+    if body.grant_type != "client_credentials":
+        raise HTTPException(400, "Only grant_type=client_credentials is supported")
+    from gyrfalcon.security import issue_access_token
+    token = issue_access_token(body.client_id, body.client_secret)
+    if token is None:
+        raise HTTPException(401, "Invalid client credentials")
+    return token
+
+
+# --- Security: Secret Store (Administration > Security) ---
+
+class SecretCreate(BaseModel):
+    name: str
+    description: str = ""
+    value: str
+
+
+class SecretUpdate(BaseModel):
+    description: Optional[str] = None
+    value: Optional[str] = None
+
+
+@app.get("/api/security/secrets")
+async def list_secrets(request: Request):
+    _verify_token(request)
+    from gyrfalcon.security import load_secrets, public_secret
+    return {"secrets": [public_secret(s) for s in load_secrets()]}
+
+
+@app.post("/api/security/secrets")
+async def create_secret_endpoint(request: Request, body: SecretCreate):
+    """The value is accepted but never echoed back — not here, not on GET."""
+    _verify_token(request)
+    from gyrfalcon.security import create_secret
+    return create_secret(body.name, body.description, body.value)
+
+
+@app.put("/api/security/secrets/{secret_id}")
+async def update_secret_endpoint(request: Request, secret_id: str, body: SecretUpdate):
+    _verify_token(request)
+    from gyrfalcon.security import update_secret
+    secret = update_secret(secret_id, description=body.description, value=body.value)
+    if secret is None:
+        raise HTTPException(404, "Secret not found")
+    return secret
+
+
+@app.delete("/api/security/secrets/{secret_id}")
+async def delete_secret_endpoint(request: Request, secret_id: str):
+    _verify_token(request)
+    from gyrfalcon.security import delete_secret
+    if not delete_secret(secret_id):
+        raise HTTPException(404, "Secret not found")
+    return {"ok": True}
+
+
 # --- Agents ---
 
 def _load_agents() -> list[dict]:
@@ -2074,6 +2223,12 @@ class FlowRunFilter(BaseModel):
     name: Optional[str] = None
     kind: Optional[str] = None
     flow_run_id: Optional[str] = None
+    created_from: Optional[float] = None
+    created_to: Optional[float] = None
+
+
+class FlowRunBulkDelete(BaseModel):
+    run_ids: list[str]
 
 
 def _flow_store():
@@ -2197,6 +2352,7 @@ async def filter_flow_runs(request: Request, body: FlowRunFilter):
     runs, total = _flow_store().list_runs(
         limit=body.limit, offset=body.offset, state_types=body.state_types,
         name=body.name, kind=body.kind, flow_run_id=body.flow_run_id,
+        created_from=body.created_from, created_to=body.created_to,
     )
     return {"runs": runs, "total": total}
 
@@ -2238,6 +2394,79 @@ async def cancel_flow_run(request: Request, run_id: str):
     if run["is_final"]:
         return {"status": "refused", "reason": f"run is already {run['state_name']}", "run": run}
     return {"status": "cancelling", "run": run}
+
+
+def _best_effort_params(parameters: dict) -> dict:
+    """Recovers real values from a run's stored parameters.
+
+    The engine stores every run's `parameters` as `repr()` text for display
+    and audit only (`flow/engine.py`), never as replayable data — so a retry
+    can't just resubmit them as-is. `ast.literal_eval` round-trips the common
+    JSON-like cases (str, int, float, bool, list, dict, None); anything else
+    (an object whose repr isn't a literal) is left as the repr string, which
+    the retried flow will receive as-is rather than crash the retry attempt.
+    """
+    import ast
+
+    out: dict = {}
+    for k, v in parameters.items():
+        if isinstance(v, str):
+            try:
+                out[k] = ast.literal_eval(v)
+                continue
+            except (ValueError, SyntaxError):
+                pass
+        out[k] = v
+    return out
+
+
+@app.post("/api/flow/runs/{run_id}/retry")
+async def retry_flow_run(request: Request, run_id: str):
+    """Resubmits a finished flow run as a new run of the same definition."""
+    _verify_token(request)
+    run = _flow_store().get_run(run_id)
+    if run is None:
+        raise HTTPException(404, f"Flow run not found: {run_id}")
+    if run["kind"] != "flow":
+        raise HTTPException(400, "Only flow runs can be retried directly")
+    if not run["is_final"]:
+        raise HTTPException(400, "Run is still active")
+    from gyrfalcon.flow.registry import run_definition_now
+    try:
+        new_run_id = run_definition_now(run["name"], _best_effort_params(run["parameters"] or {}))
+    except ValueError as e:
+        raise HTTPException(404 if "No definition" in str(e) else 400, str(e))
+    return {"run_id": new_run_id}
+
+
+@app.delete("/api/flow/runs/{run_id}")
+async def delete_flow_run(request: Request, run_id: str):
+    """An action endpoint like cancel: refuses rather than tearing down a
+    still-active run out from under its own engine."""
+    _verify_token(request)
+    result = _flow_store().delete_run(run_id)
+    if result is None:
+        raise HTTPException(404, f"Flow run not found: {run_id}")
+    if result is False:
+        raise HTTPException(400, "Run is still active; cancel it first")
+    return {"status": "deleted"}
+
+
+@app.post("/api/flow/runs/delete")
+async def delete_flow_runs(request: Request, body: FlowRunBulkDelete):
+    """Bulk delete for the Instances page's "delete selected" action."""
+    _verify_token(request)
+    store = _flow_store()
+    deleted, refused, missing = [], [], []
+    for run_id in body.run_ids:
+        result = store.delete_run(run_id)
+        if result is None:
+            missing.append(run_id)
+        elif result is False:
+            refused.append(run_id)
+        else:
+            deleted.append(run_id)
+    return {"deleted": deleted, "refused": refused, "missing": missing}
 
 
 @app.get("/api/flow/stats")

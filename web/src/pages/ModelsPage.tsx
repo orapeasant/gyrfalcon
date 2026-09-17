@@ -348,7 +348,7 @@ export function ModelsPage() {
       {/* Header */}
       <div style={S.header}>
         <div style={S.headerLeft}>
-          <h1 style={S.title}>🤖 Model</h1>
+          <h1 style={S.title}>Model</h1>
           <div style={S.currentBadge(hasChanges)}>
             <span style={S.provider}>{selectedProvider || '—'}</span>
             <span style={S.separator}>›</span>

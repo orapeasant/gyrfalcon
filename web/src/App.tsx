@@ -9,6 +9,7 @@ import {
   ChevronDown, ChevronRight, Zap, Wrench, Home,
   PanelLeftClose, PanelLeftOpen, AppWindow, Sun, Moon,
   Workflow, Play, FileCode, Inbox, CalendarClock, Radio,
+  ShieldCheck, KeyRound, Lock,
 } from "lucide-react";
 
 import { ChatPage }      from "./pages/ChatPage";
@@ -31,12 +32,17 @@ import { FlowDefinitionsPage } from "./pages/FlowDefinitionsPage";
 import { FlowTasksPage }       from "./pages/FlowTasksPage";
 import { FlowDeploymentsPage } from "./pages/FlowDeploymentsPage";
 import { FlowEventsPage }      from "./pages/FlowEventsPage";
+import { ServiceAccountsPage } from "./pages/ServiceAccountsPage";
+import { SecretStorePage }     from "./pages/SecretStorePage";
 import { api } from "./lib/api";
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 
 type NavItem  = { type: "item";  path: string; label: string; icon: React.ElementType; badge?: number };
-type NavGroup = { type: "group"; label: string; icon: React.ElementType; items: NavItem[] };
+// A group's items can themselves be groups (one level deep, e.g.
+// Administration > Security > Service Accounts) — recursive so the same
+// NavGroupSection renderer handles both depths without a parallel type.
+type NavGroup = { type: "group"; label: string; icon: React.ElementType; items: NavDef[] };
 type NavDef   = NavItem | NavGroup;
 
 const NAV: NavDef[] = [
@@ -73,6 +79,13 @@ const NAV: NavDef[] = [
       { type: "item", path: "/profiles", label: "Profiles",     icon: Users },
       { type: "item", path: "/config",   label: "Configurations", icon: Settings },
       { type: "item", path: "/logs",     label: "Logs",         icon: ScrollText },
+      {
+        type: "group", label: "Security", icon: ShieldCheck,
+        items: [
+          { type: "item", path: "/security/service-accounts", label: "Service Accounts", icon: KeyRound },
+          { type: "item", path: "/security/secrets",          label: "Secret Store",      icon: Lock },
+        ],
+      },
     ],
   },
 ];
@@ -85,6 +98,7 @@ const PATH_LABELS: Record<string, string> = {
   applications: "Applications", manage: "Manage",
   flows: "Flow", instances: "Instances", tasks: "My Tasks", definitions: "Definitions",
   deployments: "Deployments", events: "Events",
+  security: "Security", "service-accounts": "Service Accounts", secrets: "Secret Store",
 };
 
 const SIDEBAR_W  = 240;
@@ -136,8 +150,8 @@ const S = {
     display: collapsed ? "none" : "flex",
     alignItems: "center", justifyContent: "space-between",
     padding: "6px 16px", marginTop: "4px",
-    fontSize: "11px", fontWeight: 600, textTransform: "uppercase",
-    letterSpacing: "0.08em", color: "var(--fg-muted)",
+    fontSize: "11px", fontWeight: 600,
+    letterSpacing: "0.02em", color: "var(--fg-muted)",
     cursor: "pointer", userSelect: "none",
     transition: "color 0.1s",
   }),
@@ -226,7 +240,7 @@ const S = {
 
 // ── Components ────────────────────────────────────────────────────────────────
 
-function NavItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+function NavItemLink({ item, collapsed, indent = 0 }: { item: NavItem; collapsed: boolean; indent?: number }) {
   const [hovered, setHovered] = useState(false);
 
   return (
@@ -235,6 +249,15 @@ function NavItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
       title={collapsed ? item.label : undefined}
       style={({ isActive }) => ({
         ...S.navItem(isActive, collapsed),
+        // Nested-group items get extra left padding so the hierarchy reads
+        // visually — only meaningful when expanded, since the collapsed
+        // sidebar shows icons only and has no room for it. Always a concrete
+        // value, never `undefined`: React's inline-style patcher treats an
+        // `undefined` value as "clear this property," which was silently
+        // deleting padding-left entirely (including the value the `padding`
+        // shorthand in S.navItem would otherwise supply) instead of falling
+        // back to it — the actual cause of items rendering unindented.
+        paddingLeft: collapsed ? "0px" : `${16 + indent * 12}px`,
         background: hovered && !isActive
           ? "var(--sidebar-hover)"
           : isActive ? "var(--sidebar-active)" : "transparent",
@@ -258,18 +281,30 @@ function NavItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
   );
 }
 
-function NavGroupSection({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
+function navGroupIsActive(group: NavGroup, pathname: string): boolean {
+  return group.items.some(i =>
+    i.type === "item" ? pathname.startsWith(i.path) : navGroupIsActive(i, pathname)
+  );
+}
+
+function NavGroupSection({ group, collapsed, depth = 0 }: { group: NavGroup; collapsed: boolean; depth?: number }) {
   const location = useLocation();
-  const anyActive = group.items.some(i => location.pathname.startsWith(i.path));
-  const [open, setOpen] = useState(true);
+  const anyActive = navGroupIsActive(group, location.pathname);
+  // A nested subgroup (e.g. Security under Administration) starts collapsed
+  // — only the top-level group defaults open — so opening the sidebar
+  // doesn't immediately dump every subsection's items into view at once.
+  const [open, setOpen] = useState(depth === 0);
 
   return (
     <div>
       {collapsed
-        ? <div style={S.groupSep} />
+        // Only the top-level group gets a separator when the sidebar is
+        // collapsed; a nested one would just add a redundant divider between
+        // icons that are already visually grouped by their parent's.
+        ? (depth === 0 && <div style={S.groupSep} />)
         : (
           <div
-            style={{ ...S.groupLabel(collapsed), color: anyActive ? "var(--fg)" : "var(--fg-muted)" }}
+            style={{ ...S.groupLabel(collapsed), color: anyActive ? "var(--fg)" : "var(--fg-muted)", paddingLeft: `${16 + depth * 12}px` }}
             onClick={() => setOpen(o => !o)}
           >
             <span style={{ display:"flex", alignItems:"center", gap:"6px" }}>
@@ -281,7 +316,9 @@ function NavGroupSection({ group, collapsed }: { group: NavGroup; collapsed: boo
         )
       }
       {(open || collapsed) && group.items.map(item => (
-        <NavItemLink key={item.path} item={item} collapsed={collapsed} />
+        item.type === "item"
+          ? <NavItemLink key={item.path} item={item} collapsed={collapsed} indent={depth + 1} />
+          : <NavGroupSection key={item.label} group={item} collapsed={collapsed} depth={depth + 1} />
       ))}
     </div>
   );
@@ -449,7 +486,9 @@ export function App() {
     return {
       ...def,
       items: def.items.map((item) =>
-        item.path === "/flows/tasks" ? { ...item, badge: pendingTaskCount || undefined } : item
+        item.type === "item" && item.path === "/flows/tasks"
+          ? { ...item, badge: pendingTaskCount || undefined }
+          : item
       ),
     };
   });
@@ -604,6 +643,9 @@ export function App() {
             <Route path="/plugins"   element={<ScrollPage><PluginsPage /></ScrollPage>} />
             <Route path="/profiles"  element={<ScrollPage><ProfilesPage /></ScrollPage>} />
             <Route path="/logs"      element={<ScrollPage><LogsPage /></ScrollPage>} />
+            <Route path="/security"                    element={<Navigate to="/security/service-accounts" replace />} />
+            <Route path="/security/service-accounts"   element={<ScrollPage><ServiceAccountsPage /></ScrollPage>} />
+            <Route path="/security/secrets"            element={<ScrollPage><SecretStorePage /></ScrollPage>} />
             <Route path="/applications/manage"  element={<ApplicationsManagePage />} />
             <Route path="/applications/:id"     element={<ApplicationDetailPage />} />
             <Route path="/applications"         element={<Navigate to="/applications/manage" replace />} />

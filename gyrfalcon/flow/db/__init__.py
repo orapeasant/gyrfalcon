@@ -11,6 +11,7 @@ SQLite via `gyrfalcon_state.SessionDB` no matter what is set here (§15.12).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -55,10 +56,31 @@ class StoreSettings:
 def store_settings() -> StoreSettings:
     """Read `flow.store.*`, normalizing the backend alias set.
 
+    `RUN_MODE` (§15.12b) gates this before anything else: **CLIENT mode
+    always resolves to SQLite**, full stop, regardless of `flow.store.*` or
+    any DB env var — a client is single-user by definition, and forcing
+    SQLite here is what makes that true structurally rather than by
+    convention someone can forget to follow. **SERVER mode** uses the
+    configured backend: the `GYRFALCON_DB_BACKEND`/`GYRFALCON_DB_DSN` env
+    vars (settable from `.env`) first, then `flow.store.backend`/
+    `flow.store.dsn` in `config.yaml`, so a server deployment can point at
+    PostgreSQL from `.env` alone. Env-before-config, not the other way
+    round, is deliberate: `DEFAULT_CONFIG` (`config.py`) always persists an
+    explicit `flow.store.backend: sqlite` once `config.yaml` exists at all,
+    so "config first" would make that baked-in default permanently mask an
+    `.env` override — the one thing this env pair exists to let you set.
+    Neither set still means SQLite — SERVER mode changes what backend *can*
+    be configured, not the default.
+
     Falls back to the SQLite defaults if config is unreadable: an unreadable
     config file should not take the flow engine down when the default backend
     needs no configuration at all.
     """
+    from gyrfalcon.gyrfalcon_constants import get_run_mode
+
+    if get_run_mode() == "CLIENT":
+        return StoreSettings(backend="sqlite")
+
     try:
         from gyrfalcon.config import cfg_get
     except Exception:
@@ -70,10 +92,13 @@ def store_settings() -> StoreSettings:
         except (TypeError, ValueError):
             return default
 
+    backend = os.environ.get("GYRFALCON_DB_BACKEND", "") or cfg_get("flow.store.backend", "") or "sqlite"
+    dsn = os.environ.get("GYRFALCON_DB_DSN", "") or cfg_get("flow.store.dsn", "") or ""
+
     return StoreSettings(
-        backend=_normalize(cfg_get("flow.store.backend", "sqlite")),
+        backend=_normalize(backend),
         path=str(cfg_get("flow.store.path", "") or ""),
-        dsn=str(cfg_get("flow.store.dsn", "") or ""),
+        dsn=str(dsn),
         pool_min_size=_int("pool_min_size", 1),
         pool_max_size=_int("pool_max_size", 10),
         statement_timeout_ms=_int("statement_timeout_ms", 30000),

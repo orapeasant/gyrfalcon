@@ -225,7 +225,14 @@ export function ChatPage() {
     try { return localStorage.getItem("gyrfalcon_streaming") !== "false"; } catch { return true; }
   });
   const pendingResumeRef = useRef<string | null>(searchParams.get("session"));
-  
+  // First Esc arms cancellation; a second Esc within ESC_CANCEL_WINDOW_MS
+  // sends it. Requiring two presses (rather than one) keeps a stray Esc —
+  // dismissing a tooltip, backing out of an unrelated focus state — from
+  // silently killing an in-progress turn.
+  const [escArmed, setEscArmed] = useState(false);
+  const escHintTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ESC_CANCEL_WINDOW_MS = 1500;
+
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -588,6 +595,60 @@ export function ChatPage() {
     wsRef.current.send(JSON.stringify(request));
   }, [input]);
 
+  const cancelCurrentWork = useCallback(() => {
+    if (escHintTimeoutRef.current) {
+      clearTimeout(escHintTimeoutRef.current);
+      escHintTimeoutRef.current = null;
+    }
+    setEscArmed(false);
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const request = { jsonrpc: "2.0", id: Date.now(), method: "agent.interrupt", params: {} };
+    chatLogger.send("agent.interrupt", {});
+    wsRef.current.send(JSON.stringify(request));
+    // Optimistic — the agent only checks the interrupt flag between loop
+    // iterations (an in-flight LLM/tool call still finishes), so the real
+    // message.complete/error event may still take a moment to arrive.
+    setIsThinking(false);
+    setIsStreaming(false);
+  }, []);
+
+  // Global, not just the textarea's onKeyDown, so Esc cancels a running turn
+  // regardless of what has focus. Deliberately skips when the slash menu is
+  // open — Esc there closes the menu (SlashMenu.tsx), not the turn.
+  useEffect(() => {
+    function onDocKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape" || slashMenuOpen) return;
+      if (!isThinking && !isStreaming) return;
+      if (escArmed) {
+        cancelCurrentWork();
+      } else {
+        setEscArmed(true);
+        escHintTimeoutRef.current = setTimeout(() => setEscArmed(false), ESC_CANCEL_WINDOW_MS);
+      }
+    }
+    document.addEventListener("keydown", onDocKeyDown);
+    // Only removes the listener — clearing escHintTimeoutRef here too would
+    // fire on every escArmed change (this effect's own dependency) and wipe
+    // out the auto-disarm timer the instant it gets set.
+    return () => document.removeEventListener("keydown", onDocKeyDown);
+  }, [slashMenuOpen, isThinking, isStreaming, escArmed, cancelCurrentWork]);
+
+  // Disarm if the turn ends on its own before a second Esc arrives, and
+  // clear the pending auto-disarm timer on unmount.
+  useEffect(() => {
+    if (!isThinking && !isStreaming && escArmed) {
+      setEscArmed(false);
+      if (escHintTimeoutRef.current) {
+        clearTimeout(escHintTimeoutRef.current);
+        escHintTimeoutRef.current = null;
+      }
+    }
+  }, [isThinking, isStreaming, escArmed]);
+
+  useEffect(() => () => {
+    if (escHintTimeoutRef.current) clearTimeout(escHintTimeoutRef.current);
+  }, []);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Delegate to slash menu first when active
     if (slashMenuOpen && slashMenuKeyHandler.current) {
@@ -632,6 +693,7 @@ export function ChatPage() {
   }, [connect]);
 
   const getStatusColor = () => {
+    if (escArmed) return "var(--color-warning, #f59e0b)";
     if (isStreaming) return "var(--fg)";
     switch (connectionState) {
       case "connected": return "var(--color-success, #22c55e)";
@@ -642,6 +704,7 @@ export function ChatPage() {
   };
 
   const getStatusText = () => {
+    if (escArmed) return "Press Esc again to cancel";
     if (isStreaming) return "Streaming...";
     if (isThinking) return "Thinking...";
     if (engineState === "starting") return "Starting engine...";

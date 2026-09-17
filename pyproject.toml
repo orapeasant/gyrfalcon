@@ -47,6 +47,9 @@ dev = [
 postgres = [
     "pg8000>=1.31",
 ]
+flow-samples = [
+    "langgraph>=1.2.11",
+]
 
 [project.scripts]
 gyrfalcon = "gyrfalcon_cli.main:main"
