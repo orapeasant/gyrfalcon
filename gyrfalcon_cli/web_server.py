@@ -10,7 +10,16 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Depends
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
@@ -641,6 +650,129 @@ async def set_model(request: Request):
         config.setdefault("provider", {})["active"] = provider
     save_config(config)
     return {"status": "saved", "model": model, "provider": provider}
+
+
+# --- Tokenomics (spec 19-tokenomics.md) ---
+
+@app.get("/api/tokenomics/models")
+async def tokenomics_models(request: Request, q: str = "", limit: int = 200):
+    """Models the estimator can price, with how each one would be counted.
+
+    Deliberately cheap: `describe()` reports a model's counting method without
+    counting anything, so opening the picker costs no `count_tokens` calls.
+    """
+    _verify_token(request)
+    from gyrfalcon.pricing import catalog as price_catalog
+    from gyrfalcon.tokenizers import describe
+
+    needle = (q or "").lower().strip()
+    rows = []
+    for name, rates in price_catalog.load().items():
+        if needle and needle not in name:
+            continue
+        info = describe(name)
+        rows.append({
+            "model": name,
+            "provider": rates.provider,
+            "billing": rates.billing,
+            "input_per_1k": rates.input,
+            "output_per_1k": rates.output,
+            "cache_read_per_1k": rates.effective_cache_read(),
+            "cache_write_per_1k": rates.effective_cache_write("5m"),
+            "context_window": rates.context_window,
+            "countable": info["available"],
+            "method": info["method"],
+            "tokenizer": info["tokenizer"],
+            "detail": info["detail"],
+        })
+    # Countable models first, then cheapest — the useful default ordering.
+    rows.sort(key=lambda r: (not r["countable"], r["input_per_1k"], r["model"]))
+    return {
+        "models": rows[:limit],
+        "total": len(rows),
+        "catalog": price_catalog.meta(),
+    }
+
+
+@app.post("/api/tokenomics/upload")
+async def tokenomics_upload(request: Request, file: UploadFile = File(...)):
+    """Extract text from an uploaded document for estimating.
+
+    The extracted text is held in memory with a TTL and is never written to
+    disk or into the session store (§19.5.3).
+    """
+    _verify_token(request)
+    from gyrfalcon.documents import MAX_BYTES, extract, store_upload
+
+    data = await file.read()
+    if len(data) > MAX_BYTES:
+        raise HTTPException(
+            413, f"File exceeds the {MAX_BYTES // (1024 * 1024)} MB limit"
+        )
+
+    extracted = extract(file.filename or "upload", data)
+    upload = store_upload(extracted)
+    return {
+        "id": upload.id,
+        "filename": upload.filename,
+        "chars": len(upload.text),
+        "pages": upload.pages,
+        "warnings": upload.warnings,
+        "empty": not upload.text.strip(),
+        "preview": upload.text[:500],
+    }
+
+
+@app.post("/api/tokenomics/estimate")
+async def tokenomics_estimate(request: Request):
+    """Estimate token cost for text across models. Makes no LLM call."""
+    _verify_token(request)
+    from gyrfalcon.tokenomics.estimate import DEFAULT_OUTPUT_TOKENS, estimate
+
+    body = await request.json()
+    models = body.get("models") or []
+    if not models:
+        raise HTTPException(400, "models is required")
+    if len(models) > 12:
+        raise HTTPException(400, "at most 12 models per estimate")
+
+    text = body.get("text") or ""
+    upload_id = body.get("upload_id")
+    if upload_id:
+        from gyrfalcon.documents import get_upload
+
+        upload = get_upload(upload_id)
+        if upload is None:
+            raise HTTPException(404, "upload expired or not found")
+        text = upload.text
+    if not text:
+        raise HTTPException(400, "text or upload_id is required")
+
+    try:
+        output_tokens = int(body.get("output_tokens", DEFAULT_OUTPUT_TOKENS))
+    except (TypeError, ValueError):
+        output_tokens = DEFAULT_OUTPUT_TOKENS
+
+    result = estimate(
+        text=text,
+        models=models,
+        output_tokens=max(0, output_tokens),
+        include_agent_prompt=bool(body.get("include_agent_prompt", True)),
+        enabled_toolsets=body.get("toolsets") or None,
+        cache_ttl=body.get("cache_ttl") or "5m",
+    )
+    return result.as_dict()
+
+
+@app.post("/api/pricing/refresh")
+async def tokenomics_pricing_refresh(request: Request):
+    """Refresh the price catalog from the public feed."""
+    _verify_token(request)
+    from gyrfalcon.pricing import catalog as price_catalog
+
+    result = price_catalog.refresh()
+    result["catalog"] = price_catalog.meta()
+    return result
 
 
 # --- Analytics ---

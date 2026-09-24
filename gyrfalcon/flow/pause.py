@@ -166,7 +166,7 @@ def _run_row(flow_run_id: str):
     who may see the run, so it cannot itself be filtered by the caller.
     """
     try:
-        from gyrfalcon.flow.db.scope import Scope
+        from gyrfalcon.db.scope import Scope
         from gyrfalcon.flow.store import get_store
 
         return get_store().get_run(

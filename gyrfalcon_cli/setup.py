@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Confirm, Prompt
 
-from gyrfalcon.config import save_config, load_config, save_env_value, get_env_value, DEFAULT_CONFIG
-from gyrfalcon.gyrfalcon_constants import get_gyrfalcon_home, get_app_name
-from gyrfalcon.providers.copilot import device_code_flow, is_authenticated
+from gyrfalcon.config import get_env_value, load_config, save_config, save_env_value
+from gyrfalcon.gyrfalcon_constants import get_app_name, get_gyrfalcon_home
 from gyrfalcon.gyrfalcon_logging import get_logger
+from gyrfalcon.providers.copilot import device_code_flow, is_authenticated
+
 logger = get_logger("setup")
 
 
@@ -48,6 +49,12 @@ def run_setup():
 
     # Step 3: Security
     _setup_security(console, config)
+
+    # Step 4: Slack (optional)
+    _setup_slack(console, config)
+
+    # Step 5: Microsoft Teams (optional)
+    _setup_teams(console, config)
 
     # Save
     save_config(config)
@@ -187,7 +194,7 @@ def _setup_agent(console: Console, config: dict) -> None:
     current_max_turns = config.get("agent", {}).get("max_turns", 90)
 
     console.print(f"  [0] Keep current setting [dim](max_turns: {current_max_turns})[/dim]")
-    console.print(f"  [1] Change max tool-calling iterations")
+    console.print("  [1] Change max tool-calling iterations")
 
     choice = Prompt.ask("Select", choices=["0", "1"], default="0")
     if choice == "0":
@@ -218,3 +225,116 @@ def _setup_security(console: Console, config: dict) -> None:
 
     mode_map = {"1": "smart", "2": "always", "3": "none"}
     config["security"]["approval_mode"] = mode_map[choice]
+
+
+def _parse_ids(raw: str) -> list[str]:
+    """`"U01ABC, U02DEF"` -> `["U01ABC", "U02DEF"]`; tolerant of spaces and semicolons."""
+    return [part.strip() for part in raw.replace(";", ",").split(",") if part.strip()]
+
+
+def _setup_slack(console: Console, config: dict) -> None:
+    """Step 4: Slack (optional). Spec docs/spec/gyrfalcon/18-slack.md, setup in docs/slack/README.md."""
+    logger.debug("Beginning of _setup_slack")
+    console.print("\n[bold]Step 4: Slack (optional)[/bold]\n")
+
+    slack = config.get("gateway", {}).get("platforms", {}).get("slack", {})
+    configured = bool(slack.get("enabled"))
+    question = "Slack is already configured. Reconfigure it?" if configured else "Connect Gyrfalcon to Slack?"
+    if not Confirm.ask(question, default=False):
+        console.print("[dim]  Skipping Slack.[/dim]")
+        return
+
+    console.print(
+        "  Create the app from [bold]docs/slack/manifest.yaml[/bold] first (see docs/slack/README.md),"
+        " then paste its two tokens.\n"
+    )
+    bot = Prompt.ask("Bot User OAuth Token (xoxb-...)", password=True).strip()
+    app = Prompt.ask("App-Level Token (xapp-...)", password=True).strip()
+    if not bot.startswith("xoxb-") or not app.startswith("xapp-"):
+        console.print(
+            "[red]  The bot token must start with xoxb- and the app-level token with xapp-. Nothing was saved.[/red]"
+        )
+        return
+
+    users = _parse_ids(Prompt.ask(
+        "Slack member ID(s) allowed to talk to the agent, comma-separated [dim](profile > ... > Copy member ID)[/dim]",
+        default=", ".join(slack.get("allow", {}).get("users", [])),
+    ))
+    if not users:
+        console.print(
+            "[yellow]  No users listed: the bot will refuse every message until you add some under "
+            "gateway.platforms.slack.allow.users.[/yellow]"
+        )
+
+    # Tokens go to .env (created owner-only), never into config.yaml: the dashboard's config API returns that file.
+    save_env_value("SLACK_BOT_TOKEN", bot)
+    save_env_value("SLACK_APP_TOKEN", app)
+
+    platforms = config.setdefault("gateway", {}).setdefault("platforms", {})
+    entry = platforms.setdefault("slack", {})
+    entry.update({"enabled": True, "mode": "socket", "toolset": entry.get("toolset") or "slack"})
+    allow = entry.setdefault("allow", {})
+    allow["users"] = users
+    allow.setdefault("channels", [])
+
+    try:
+        import slack_sdk  # noqa: F401
+    except ImportError:
+        console.print("[yellow]  The Slack SDK is not installed. Run: uv sync --extra slack[/yellow]")
+    console.print("[green]  ✓ Slack configured. Start it with `gyrfalcon gateway`.[/green]")
+    console.print(
+        "[dim]  Direct messages work immediately. To use it in a channel, add the channel id to "
+        "gateway.platforms.slack.allow.channels.[/dim]"
+    )
+
+
+def _setup_teams(console: Console, config: dict) -> None:
+    """Step 5: Microsoft Teams bot credentials and gateway settings."""
+    console.print("\n[bold]Step 5: Microsoft Teams (optional)[/bold]\n")
+    teams = config.get("gateway", {}).get("platforms", {}).get("teams", {})
+    configured = bool(teams.get("enabled"))
+    question = "Teams is already configured. Reconfigure it?" if configured else "Connect Gyrfalcon to Microsoft Teams?"
+    if not Confirm.ask(question, default=False):
+        console.print("[dim]  Skipping Teams.[/dim]")
+        return
+
+    console.print(
+        "  Register a Teams bot and public HTTPS endpoint first. See [bold]docs/teams/README.md[/bold].\n"
+    )
+    client_id = Prompt.ask("Application (client) ID", default=teams.get("client_id", "")).strip()
+    tenant_id = Prompt.ask("Directory (tenant) ID", default=teams.get("tenant_id", "")).strip()
+    secret = Prompt.ask("Client secret value", password=True).strip()
+    if not all((client_id, tenant_id, secret)):
+        console.print("[red]  All three values are required. Nothing was saved.[/red]")
+        return
+
+    users = _parse_ids(Prompt.ask(
+        "Teams user ID(s) allowed to talk to the agent, comma-separated",
+        default=", ".join(teams.get("allow", {}).get("users", [])),
+    ))
+    if not users:
+        console.print(
+            "[yellow]  No users listed: the bot will refuse every message until you add IDs under "
+            "gateway.platforms.teams.allow.users.[/yellow]"
+        )
+
+    save_env_value("TEAMS_CLIENT_SECRET", secret)
+    entry = config.setdefault("gateway", {}).setdefault("platforms", {}).setdefault("teams", {})
+    entry.update({
+        "enabled": True,
+        "client_id": client_id,
+        "tenant_id": tenant_id,
+        "host": entry.get("host") or "127.0.0.1",
+        "port": entry.get("port") or 3978,
+        "toolset": entry.get("toolset") or "teams",
+    })
+    allow = entry.setdefault("allow", {})
+    allow["users"] = users
+    allow.setdefault("channels", [])
+
+    try:
+        import microsoft_teams.apps  # noqa: F401
+    except ImportError:
+        console.print("[yellow]  The Teams SDK is not installed. Run: uv sync --extra teams[/yellow]")
+    console.print("[green]  ✓ Teams configured. Start it with `gyrfalcon gateway`.[/green]")
+    console.print("[dim]  Teams must reach your public HTTPS URL at /api/messages.[/dim]")

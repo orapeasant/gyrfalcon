@@ -49,6 +49,17 @@ hiddenimports = (
     + user_code_stdlib
 )
 
+# pg8000 is only imported lazily, inside a function (gyrfalcon/db/__init__.py
+# _require_pg8000), specifically so a SQLite-only install pays no cost for it.
+# PyInstaller's static analysis never sees a deferred import like that, so
+# without this it's silently missing from the frozen binary even when it's
+# installed in the build venv — the Postgres backend then breaks only at
+# runtime, inside a background thread, with no hint it's a packaging gap.
+try:
+    hiddenimports += collect_submodules("pg8000")
+except Exception:
+    pass
+
 a = Analysis(
     ["gyrfalcon_cli/main.py"],
     pathex=["."],

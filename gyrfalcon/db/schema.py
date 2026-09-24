@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
-    from gyrfalcon.flow.db.base import Dialect
+    from gyrfalcon.db.base import Dialect
 
 
 @dataclass(frozen=True)
@@ -438,8 +438,110 @@ NAV_TABLES = (NAV_PAGES, NAV_FUNCTIONS, NAV_MENUS, NAV_MENU_ITEMS,
               AUTH_ROLES, NAV_VERSIONS)
 
 
+
+# --------------------------------------------------------------------------
+# sessions — conversations, their messages, and per-call token usage (§19.7)
+# --------------------------------------------------------------------------
+#
+# These live beside flow, nav and auth rather than in `gyrfalcon_state.py`
+# because a server install needs them tenant-scoped, and `sessions` was the one
+# substantial data set outside `Scope`. CLIENT mode still resolves to SQLite
+# (`db/__init__.py`), so a single-user box gains tenancy columns it never has
+# to think about.
+
+SESSIONS = Table(
+    name="sessions",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("source", "TEXT"),
+        Column("agent_id", "TEXT"),
+        Column("model", "TEXT"),
+        Column("parent_session_id", "TEXT"),
+        Column("title", "TEXT"),
+        Column("system_prompt", "TEXT"),
+        Column("started_at", "REAL", "NOT NULL"),
+        Column("ended_at", "REAL"),
+        Column("last_active", "REAL"),
+        # Token accounting. `uncached_input_tokens` rather than `input_tokens`
+        # because the three classes must not overlap: providers disagree about
+        # whether the prompt figure already contains the cached tokens, and one
+        # column that means different things per row cannot be summed (§19.6).
+        Column("uncached_input_tokens", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("cache_read_tokens", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("cache_write_tokens", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("output_tokens", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("reasoning_tokens", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("cost_usd", "REAL", "NOT NULL DEFAULT 0"),
+        Column("user_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+        Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+    ),
+    indexes=(
+        Index("idx_sessions_owner", "sessions", "tenant_id, last_active DESC"),
+        Index("idx_sessions_user", "sessions", "user_id, last_active DESC"),
+        Index("idx_sessions_parent", "sessions", "parent_session_id"),
+    ),
+)
+
+SESSION_MESSAGES = Table(
+    name="session_messages",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("session_id", "TEXT", "NOT NULL"),
+        Column("seq", "INTEGER", "NOT NULL"),
+        Column("role", "TEXT", "NOT NULL"),
+        Column("content", "TEXT"),
+        Column("tool_call_id", "TEXT"),
+        Column("tool_calls", "TEXT"),
+        Column("tool_name", "TEXT"),
+        Column("reasoning", "TEXT"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("user_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+        Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+    ),
+    indexes=(
+        Index("idx_session_messages_session", "session_messages",
+              "session_id, seq"),
+        Index("idx_session_messages_owner", "session_messages",
+              "tenant_id, created_at DESC"),
+    ),
+)
+
+SESSION_USAGE = Table(
+    name="session_usage",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("session_id", "TEXT", "NOT NULL"),
+        Column("seq", "INTEGER", "NOT NULL"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("provider", "TEXT"),
+        Column("model", "TEXT"),
+        Column("uncached_input_tokens", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("cache_read_tokens", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("cache_write_tokens", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("cache_ttl", "TEXT"),
+        Column("output_tokens", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("reasoning_tokens", "INTEGER", "NOT NULL DEFAULT 0"),
+        Column("cost_usd", "REAL", "NOT NULL DEFAULT 0"),
+        # Which price list produced `cost_usd`. Without it a later catalog
+        # refresh silently rewrites history: the stored number would no longer
+        # correspond to any price list anyone could look up (§19.7).
+        Column("pricing_catalog_version", "TEXT"),
+        Column("user_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+        Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+    ),
+    indexes=(
+        Index("idx_session_usage_session", "session_usage", "session_id, seq"),
+        Index("idx_session_usage_owner", "session_usage",
+              "tenant_id, created_at DESC"),
+        Index("idx_session_usage_model", "session_usage", "model"),
+    ),
+)
+
+SESSION_TABLES = (SESSIONS, SESSION_MESSAGES, SESSION_USAGE)
+
+
 ALL_TABLES = (RUN_TABLES + EVENT_TABLES + DEPLOYMENT_TABLES + AUTH_TABLES
-              + NAV_TABLES)
+              + NAV_TABLES + SESSION_TABLES)
 
 
 def render(tables: Sequence[Table], dialect: "Dialect") -> list[str]:

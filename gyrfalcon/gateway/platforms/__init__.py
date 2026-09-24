@@ -1,77 +1,58 @@
-"""Platform adapter abstract base class."""
+"""Platform adapters.
+
+`base` holds the contract. The registry maps a platform name to the adapter that
+implements it as a `module:Class` string, imported lazily — so a platform whose
+SDK is not installed costs a clear message when it is *enabled*, not an
+ImportError at gateway startup for everyone.
+"""
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, Optional
+import importlib
+from typing import Type
+
+from gyrfalcon.gateway.platforms.base import (  # noqa: F401  (re-exported)
+    DONE,
+    FAILED,
+    QUEUED,
+    WORKING,
+    ApprovalInteraction,
+    BasePlatformAdapter,
+    MessageEvent,
+    SendResult,
+    SessionSource,
+)
+
+#: platform name -> "module:Class"
+ADAPTER_REGISTRY: dict[str, str] = {
+    "slack": "gyrfalcon.gateway.platforms.slack:SlackAdapter",
+    "teams": "gyrfalcon.gateway.platforms.teams:TeamsAdapter",
+}
+
+#: platform name -> what to install if its adapter's dependencies are missing.
+INSTALL_HINTS: dict[str, str] = {
+    "slack": "uv sync --extra slack",
+    "teams": "uv sync --extra teams",
+}
 
 
-@dataclass
-class SendResult:
-    """Result of sending a message."""
-    success: bool
-    message_id: Optional[str] = None
-    error: Optional[str] = None
+class AdapterUnavailable(RuntimeError):
+    """The platform is unknown, or its adapter could not be imported."""
 
 
-@dataclass
-class SessionSource:
-    """Identifies the source of a gateway session."""
-    platform: str
-    chat_id: str
-    chat_name: str = ""
-    user_id: str = ""
-    user_name: str = ""
-    thread_id: str = ""
-    chat_type: str = ""
-    guild_id: str = ""
-    message_id: str = ""
-    is_bot: bool = False
-
-
-class BasePlatformAdapter(ABC):
-    """Abstract base class for platform adapters."""
-
-    def __init__(self, config: dict):
-        self.config = config
-        self._message_callback = None
-
-    @abstractmethod
-    async def connect(self) -> bool:
-        """Connect to the platform. Returns True on success."""
-        ...
-
-    @abstractmethod
-    async def disconnect(self) -> None:
-        """Graceful disconnection."""
-        ...
-
-    @abstractmethod
-    async def send(
-        self, chat_id: str, content: str,
-        reply_to: str | None = None, metadata: dict | None = None
-    ) -> SendResult:
-        """Send a message to a chat."""
-        ...
-
-    @abstractmethod
-    async def get_chat_info(self, chat_id: str) -> dict:
-        """Get information about a chat/channel."""
-        ...
-
-    def on_message(self, callback) -> None:
-        """Register message callback."""
-        self._message_callback = callback
-
-    async def edit_message(
-        self, chat_id: str, message_id: str, content: str
-    ) -> bool:
-        """Edit an existing message (for streaming updates)."""
-        return False
-
-    @property
-    @abstractmethod
-    def platform_name(self) -> str:
-        """Platform identifier."""
-        ...
+def load_adapter_class(name: str) -> Type[BasePlatformAdapter]:
+    target = ADAPTER_REGISTRY.get(name)
+    if not target:
+        raise AdapterUnavailable(
+            f"No adapter for platform '{name}'. Known platforms: {', '.join(sorted(ADAPTER_REGISTRY)) or 'none'}."
+        )
+    module_name, _, class_name = target.partition(":")
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        hint = INSTALL_HINTS.get(name)
+        raise AdapterUnavailable(
+            f"Platform '{name}' is enabled but its adapter could not be imported ({exc})."
+            + (f" Install its dependencies with: {hint}" if hint else "")
+        ) from exc
+    return getattr(module, class_name)

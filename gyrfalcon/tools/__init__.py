@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+import inspect
 import json
 import threading
 from dataclasses import dataclass, field
@@ -24,6 +27,28 @@ class ToolEntry:
     emoji: str = "🔧"
     max_result_size_chars: int = 50_000
     read_only: bool = False   # True = never requires approval; False = may require approval
+
+
+def _run_coroutine(coro):
+    """Run an `is_async=True` tool's coroutine to completion.
+
+    Dispatch is synchronous — it is called from the agent's turn, on a worker
+    thread — but a handler declared `async def` returns a coroutine, which used
+    to be passed straight to `json.dumps` and fail with "Object of type
+    coroutine is not JSON serializable". Every async tool was broken that way:
+    the browser tools, and `send_message`.
+
+    Normally there is no event loop on this thread, so the coroutine gets a
+    fresh one. If dispatch is ever called from inside a running loop, blocking
+    that loop would deadlock, so the work goes to its own loop on another
+    thread instead.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 class ToolRegistry:
@@ -86,6 +111,8 @@ class ToolRegistry:
 
         try:
             result = entry.handler(args, **kwargs)
+            if inspect.iscoroutine(result):
+                result = _run_coroutine(result)
             if not isinstance(result, str):
                 result = json.dumps(result)
             if len(result) > entry.max_result_size_chars:

@@ -22,9 +22,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional
 
-from gyrfalcon.flow.db import open_database, resolve_target, sql
-from gyrfalcon.flow.db.migrations import ensure_schema
-from gyrfalcon.flow.db.scope import Scope, current_scope
+from gyrfalcon.db import open_database, resolve_target, sql
+from gyrfalcon.db.migrations import ensure_schema
+from gyrfalcon.db.scope import Scope, current_scope
 from gyrfalcon.identity import require_principal
 
 

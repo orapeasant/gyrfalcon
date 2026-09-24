@@ -18,7 +18,7 @@ import re
 import pytest
 from _spec import requires, sym
 
-pytestmark = requires("gyrfalcon.flow.db.scope:Scope", section="§17.5 scoping")
+pytestmark = requires("gyrfalcon.db.scope:Scope", section="§17.5 scoping")
 
 OWNED_TABLES = (
     "flow_runs", "flow_events", "flow_deployments",
@@ -26,6 +26,10 @@ OWNED_TABLES = (
     # deliberately absent: it is global (a route either shipped or it did
     # not), so a bare constant read of it is correct rather than a gap.
     "nav_functions", "nav_menus", "nav_menu_items", "auth_roles",
+    # Conversations and their per-call token spend (§19.7). Message text
+    # is the most sensitive data in this schema, so an unscoped read of it
+    # is the widest possible leak.
+    "sessions", "session_messages", "session_usage",
 )
 
 
@@ -40,7 +44,7 @@ class TestStructure:
         """
         offenders = []
         for mod in ("gyrfalcon.flow.store", "gyrfalcon.flow.events",
-                    "gyrfalcon.flow.deployments", "gyrfalcon.flow.db.sql"):
+                    "gyrfalcon.flow.deployments", "gyrfalcon.db.sql"):
             src = inspect.getsource(sym(mod))
             for lineno, line in enumerate(src.splitlines(), 1):
                 if re.search(r'["\']WHERE\s+["\' ]', line) or '"WHERE " +' in line:
@@ -57,7 +61,7 @@ class TestStructure:
         as a string is a filter that can never be applied. Reads must be
         builders that take a Scope.
         """
-        sql_mod = sym("gyrfalcon.flow.db.sql")
+        sql_mod = sym("gyrfalcon.db.sql")
         offenders = []
         for name, value in vars(sql_mod).items():
             if not isinstance(value, str) or name.startswith("_"):
@@ -74,8 +78,8 @@ class TestStructure:
 
     def test_scope_taking_builders_emit_the_predicate(self):
         """Every builder that accepts a Scope must actually use it."""
-        sql_mod = sym("gyrfalcon.flow.db.sql")
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        sql_mod = sym("gyrfalcon.db.sql")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         checked = 0
         for name, fn in vars(sql_mod).items():
             if not callable(fn) or name.startswith("_"):
@@ -98,7 +102,7 @@ class TestStructure:
         assert checked >= 8, f"expected to check most builders, checked {checked}"
 
     def test_a_system_scope_must_state_a_reason(self):
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         with pytest.raises(ValueError):
             Scope.system(reason="")
         assert Scope.system(reason="migrations").is_system
@@ -116,7 +120,7 @@ class TestStructure:
 
 class TestPredicate:
     def test_a_person_sees_only_their_own_rows(self):
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         Principal = sym("gyrfalcon.identity:Principal")
         s = Scope.of(Principal(user_id="alice", tenant_id="acme"))
         clauses, params = s.predicate()
@@ -124,23 +128,23 @@ class TestPredicate:
         assert params == ["acme", "alice"]
 
     def test_an_operator_sees_the_whole_tenant(self):
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         Principal = sym("gyrfalcon.identity:Principal")
         s = Scope.of(Principal(user_id="ops", tenant_id="acme", roles=["operator"]))
         assert s.predicate() == (["tenant_id = ?"], ["acme"])
 
     def test_an_operator_is_still_confined_to_their_tenant(self):
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         Principal = sym("gyrfalcon.identity:Principal")
         s = Scope.of(Principal(user_id="ops", tenant_id="acme", roles=["admin"]))
         assert not s.is_system, "operator is not a cross-tenant super-user"
 
     def test_system_scope_has_no_predicate(self):
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         assert Scope.system(reason="test").predicate() == ([], [])
 
     def test_owns_checks_a_row_in_hand(self):
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         s = Scope(tenant_id="acme", user_id="alice")
         assert s.owns({"tenant_id": "acme", "user_id": "alice"})
         assert not s.owns({"tenant_id": "acme", "user_id": "bob"})

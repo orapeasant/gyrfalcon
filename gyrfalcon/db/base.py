@@ -40,6 +40,34 @@ class Dialect(ABC):
         which is exactly why it lives behind a method (§15.4).
         """
 
+    #: Whether this backend has a usable full-text index for message search.
+    #: False means `search_messages` degrades to `LIKE`, which is slower but
+    #: returns the same rows — never a silent empty result.
+    supports_fulltext: bool = False
+
+    def fulltext_ddl(self, table: str, column: str) -> list[str]:
+        """DDL creating a full-text index over `table.column`, if any.
+
+        SQLite builds an FTS5 virtual table plus triggers to keep it in sync;
+        PostgreSQL builds a GIN index over `to_tsvector`. They share no syntax
+        and no maintenance model, which is exactly why this is a method rather
+        than a string in `sql.py` (§15.4). The default is no index at all.
+        """
+        return []
+
+    def fulltext_match(self, table: str, column: str) -> str:
+        """A WHERE fragment matching `column` against one `?` parameter.
+
+        Callers bind a single search term. The fragment must be valid wherever
+        a boolean expression is, so each backend spells its own operator here
+        and nothing above this layer knows which one ran.
+        """
+        return f"{column} LIKE ?"
+
+    def fulltext_term(self, query: str) -> str:
+        """Turn a user's words into the term this backend's matcher expects."""
+        return f"%{query}%"
+
     @abstractmethod
     def type_map(self) -> dict[str, str]:
         """Neutral column type -> this backend's spelling.

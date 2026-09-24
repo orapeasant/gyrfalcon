@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from gyrfalcon.tools import registry
+from gyrfalcon.tools.restrictions import sensitive_read_reason
 from gyrfalcon.gyrfalcon_logging import get_logger
 
 logger = get_logger("tools.file")
@@ -66,6 +67,12 @@ def read_file(args: dict, **kwargs) -> str:
         return json.dumps({"error": "No file_path provided"})
 
     path = Path(file_path).expanduser().resolve()
+    # A restricted agent (kwargs carries its ceiling) may not read credentials.
+    # Checked before existence so the error does not confirm which files exist.
+    if kwargs.get("allowed_tools") is not None:
+        reason = sensitive_read_reason(path)
+        if reason:
+            return json.dumps({"error": f"Read denied: {reason}"})
     if not path.exists():
         return json.dumps({"error": f"File not found: {file_path}"})
     if not path.is_file():
@@ -211,20 +218,36 @@ def search_files(args: dict, **kwargs) -> str:
     if not pattern:
         return json.dumps({"error": "No pattern provided"})
 
+    restricted = kwargs.get("allowed_tools") is not None
+    if restricted:
+        reason = sensitive_read_reason(Path(search_path))
+        if reason:
+            return json.dumps({"error": f"Search denied: {reason}"})
+
     try:
         cmd = ["grep", "-rn", "--include=*"]
         if include:
             cmd = ["grep", "-rn", f"--include={include}"]
         if exclude:
             cmd.append(f"--exclude={exclude}")
-        cmd.extend([pattern, search_path])
+        # `-e` and `--`: the pattern and path are model-supplied, and a pattern
+        # such as "-f /some/file" is otherwise parsed by grep as an option.
+        cmd.extend(["-e", pattern, "--", search_path])
 
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=30
         )
 
-        matches = result.stdout.strip().split("\n")[:max_results]
-        matches = [m for m in matches if m]
+        matches = [m for m in result.stdout.strip().split("\n") if m]
+        if restricted:
+            # grep has already walked the tree; drop hits from credential files
+            # before anything reaches the model. Lines are `path:lineno:text`.
+            def _allowed(line: str) -> bool:
+                m = re.match(r"^(.*?):\d+:", line)
+                return not (m and sensitive_read_reason(Path(m.group(1))))
+
+            matches = [m for m in matches if _allowed(m)]
+        matches = matches[:max_results]
 
         return json.dumps({
             "matches": matches,

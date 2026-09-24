@@ -2,7 +2,7 @@
 
 Spec: `17-users-roles-menus.md` §11.
 
-**Why this is not inside migration 6.** `flow/db/migrations.py` states the rule
+**Why this is not inside migration 6.** `db/migrations.py` states the rule
 it lives by: a migration is a historical fact and must not change when the
 schema does. This seed is a transcription of the dashboard's nav, and that nav
 grows every time a page ships — putting it in the migration would force a
@@ -31,6 +31,7 @@ PAGES: tuple[tuple[str, str, str, str], ...] = (
     ("chat", "/chat", "Chat", "MessageSquare"),
     ("sessions", "/sessions", "Sessions", "History"),
     ("analytics", "/analytics", "Analytics", "BarChart2"),
+    ("tokenomics", "/tokenomics", "Tokenomics", "Calculator"),
     ("applications.manage", "/applications/manage", "Applications", "AppWindow"),
     ("flow.instances", "/flows/instances", "Instances", "Play"),
     ("flow.tasks", "/flows/tasks", "My Tasks", "Inbox"),
@@ -75,7 +76,7 @@ SUBMENUS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
 
 ROLE_MENUS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
     ("App Developer Menu", "Zap",
-     ("chat", "sessions", "analytics", "applications.manage"),
+     ("chat", "sessions", "analytics", "tokenomics", "applications.manage"),
      ("Flow", "AI Engine")),
     ("System Admin Menu", "Wrench", (), ("Administration",)),
     # `identity.LOCAL` carries roles={"operator"}, so a single-user install

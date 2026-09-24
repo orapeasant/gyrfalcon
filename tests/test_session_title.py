@@ -88,6 +88,21 @@ class TestEnsureSessionTitle:
         _join_title_threads()
         assert db.get_session("s2")["title"] == "Nightly Billing Export"
 
+    def test_copilot_title_request_includes_editor_headers_when_provider_is_inferred(self, db):
+        db.create_session(session_id="copilot-title", source="slack", model="gpt-4o")
+        agent = _agent(db, "copilot-title")
+        agent.base_url = "https://api.githubcopilot.com"
+        agent.provider = None
+        client = _client_returning("Slack conversation")
+
+        with patch.object(AIAgent, "_get_client", return_value=client):
+            agent._ensure_session_title("hello", "hi")
+
+        _join_title_threads()
+        headers = client.chat.completions.create.call_args.kwargs["extra_headers"]
+        assert headers["Editor-Version"]
+        assert headers["Editor-Plugin-Version"]
+
     def test_empty_llm_response_keeps_fallback(self, db):
         db.create_session(session_id="s3", source="chat", model="m")
         agent = _agent(db, "s3")

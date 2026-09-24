@@ -202,7 +202,7 @@ class TestOwnershipInheritance:
         with self._as("alice", "acme"):
             state = parent(return_type="state")
 
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         rows, total = store.list_runs(scope=Scope.system(reason="test"))
         children = [r for r in rows if r["parent_run_id"] == state.id]
         assert len(children) == 1
@@ -227,7 +227,7 @@ class TestOwnershipInheritance:
         # A subflow does not set `flow_run_id` (that field is task-only —
         # see `engine._register_run`); `parent_run_id` is set for both kinds
         # and is what actually links a subflow to its caller.
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         rows, total = store.list_runs(scope=Scope.system(reason="test"))
         children = [r for r in rows if r["parent_run_id"] == outer.id]
         assert len(children) == 1
@@ -247,7 +247,7 @@ class TestOwnershipInheritance:
         with self._as("carol", "acme"):
             state = flaky(return_type="state")
 
-        row = store.get_run(state.id, sym("gyrfalcon.flow.db.scope:Scope").system(reason="test"))
+        row = store.get_run(state.id, sym("gyrfalcon.db.scope:Scope").system(reason="test"))
         assert row["user_id"] == "carol"
         assert row["tenant_id"] == "acme"
 
@@ -269,7 +269,7 @@ class TestOwnershipInheritance:
             with self._as("ops", "acme"):
                 pause.resume_flow_run("gate", run_input={"approve": True}, authorize=False)
 
-            row = store.get_run("gate", sym("gyrfalcon.flow.db.scope:Scope").system(reason="test"))
+            row = store.get_run("gate", sym("gyrfalcon.db.scope:Scope").system(reason="test"))
             assert row["user_id"] == "dave", "resuming must not reassign ownership to the answerer"
             assert row["tenant_id"] == "acme"
         finally:

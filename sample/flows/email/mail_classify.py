@@ -40,7 +40,7 @@ import time
 from email.utils import getaddresses
 from typing import Any, Callable, Optional
 
-from gyrfalcon.flow.db.email.mail_db import MailDB, get_mail_db, new_id
+from mail_db import MailDB, get_mail_db, new_id
 
 logger = logging.getLogger("gyrfalcon.flow.email.classify")
 

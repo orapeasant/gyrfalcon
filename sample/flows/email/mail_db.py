@@ -2,13 +2,13 @@
 pipeline (poll -> store -> classify -> dispatch).
 
 Deliberately **not** the flow engine's `flow.db`: that database's schema is
-owned by `gyrfalcon.flow.db.migrations` and is versioned as one unit with
+owned by `gyrfalcon.db.migrations` and is versioned as one unit with
 `flow_runs`/`flow_events`/`flow_deployments`. Mail has its own lifecycle
 (threading, classification, routing) that has nothing to do with run
 orchestration, so it gets its own file — `<GYRFALCON_HOME>/email/mail.db` —
 and its own tiny forward-only migration list, following the same pattern
 (`CREATE TABLE IF NOT EXISTS` is not enough once the shape can change under a
-live database — see `flow/db/migrations.py` for the reasoning this copies).
+live database — see `db/migrations.py` for the reasoning this copies).
 
 Three tables:
 
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS mail_schema_version (
 
 class MailDB:
     """Thread-safe wrapper around one SQLite connection, mirroring the
-    concurrency model `flow/db/sqlite.py` already uses: one connection,
+    concurrency model `db/sqlite.py` already uses: one connection,
     `check_same_thread=False`, guarded by a lock — because the poller, the
     classifier, and the dispatcher all run on worker threads."""
 

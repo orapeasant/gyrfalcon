@@ -3,7 +3,7 @@
 Spec: §17.11 step 8.
 
 Shares the flow database, dialect layer and migration counter (see
-`flow/db/schema.py`), so a deployment configures one DSN rather than two and
+`db/schema.py`), so a deployment configures one DSN rather than two and
 cannot end up with half a schema.
 
 Everything here runs *before* a principal exists — it is what produces one —
@@ -20,8 +20,8 @@ import uuid
 from typing import Any, Mapping, Optional, Sequence
 
 from gyrfalcon.auth import keys as keymod
-from gyrfalcon.flow.db import open_database, resolve_target, sql
-from gyrfalcon.flow.db.migrations import ensure_schema
+from gyrfalcon.db import open_database, resolve_target, sql
+from gyrfalcon.db.migrations import ensure_schema
 from gyrfalcon.identity import Principal
 
 

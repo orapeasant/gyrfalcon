@@ -109,14 +109,14 @@ class TestCliFlagPrecedence:
 
 class TestDatabaseSelection:
     def test_client_uses_sqlite(self, home):
-        from gyrfalcon.flow.db import store_settings
+        from gyrfalcon.db import store_settings
 
         assert store_settings().backend == "sqlite"
 
     def test_client_ignores_a_configured_postgres_backend(self, home, monkeypatch):
         """The load-bearing rule. A CLIENT install pointed at PostgreSQL by a
         stray env var still opens its own local SQLite file."""
-        from gyrfalcon.flow.db import store_settings
+        from gyrfalcon.db import store_settings
 
         monkeypatch.setenv("RUN_MODE", "CLIENT")
         monkeypatch.setenv("GYRFALCON_DB_BACKEND", "postgres")
@@ -127,7 +127,7 @@ class TestDatabaseSelection:
         assert settings.dsn == "", "a CLIENT must not even carry the DSN around"
 
     def test_server_honours_the_env_backend(self, home, monkeypatch):
-        from gyrfalcon.flow.db import store_settings
+        from gyrfalcon.db import store_settings
 
         monkeypatch.setenv("RUN_MODE", "SERVER")
         monkeypatch.setenv("GYRFALCON_DB_BACKEND", "postgres")
@@ -141,7 +141,7 @@ class TestDatabaseSelection:
         """SERVER changes what *can* be configured, not the default. An
         operator who flips the mode without setting a DSN gets a working
         install, not a startup failure."""
-        from gyrfalcon.flow.db import store_settings
+        from gyrfalcon.db import store_settings
 
         monkeypatch.setenv("RUN_MODE", "SERVER")
 
@@ -152,7 +152,7 @@ class TestDatabaseSelection:
         a config-before-env precedence would make the env pair permanently
         unreachable — which is the bug this ordering exists to avoid."""
         from gyrfalcon.config import cfg_get
-        from gyrfalcon.flow.db import store_settings
+        from gyrfalcon.db import store_settings
 
         assert cfg_get("flow.store.backend", "") == "sqlite", "precondition"
 
@@ -166,7 +166,7 @@ class TestDatabaseSelection:
         ("postgresql", "postgres"), ("pg", "postgres"), ("sqlite3", "sqlite"),
     ])
     def test_backend_aliases_normalise(self, home, monkeypatch, alias, expected):
-        from gyrfalcon.flow.db import store_settings
+        from gyrfalcon.db import store_settings
 
         monkeypatch.setenv("RUN_MODE", "SERVER")
         monkeypatch.setenv("GYRFALCON_DB_BACKEND", alias)

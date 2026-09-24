@@ -21,12 +21,53 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
-from gyrfalcon.flow.db.base import Connection, Database, Dialect
+from gyrfalcon.db.base import Connection, Database, Dialect
 
 
 class SqliteDialect(Dialect):
     name = "sqlite"
     supports_skip_locked = False
+    supports_fulltext = True
+
+    def fulltext_ddl(self, table: str, column: str) -> list[str]:
+        """An FTS5 shadow table kept in sync by triggers.
+
+        `content=` makes it an external-content index, so the text is stored
+        once rather than twice. The triggers are what keep it honest: without
+        the delete trigger a removed message stays searchable forever.
+        """
+        index = f"{table}_fts"
+        return [
+            f"CREATE VIRTUAL TABLE IF NOT EXISTS {index} USING fts5("
+            f"{column}, content='{table}', content_rowid='rowid', "
+            f"tokenize='unicode61')",
+            f"CREATE TRIGGER IF NOT EXISTS {table}_fts_ai AFTER INSERT ON {table} "
+            f"BEGIN INSERT INTO {index}(rowid, {column}) "
+            f"VALUES (new.rowid, new.{column}); END",
+            f"CREATE TRIGGER IF NOT EXISTS {table}_fts_ad AFTER DELETE ON {table} "
+            f"BEGIN INSERT INTO {index}({index}, rowid, {column}) "
+            f"VALUES ('delete', old.rowid, old.{column}); END",
+            f"CREATE TRIGGER IF NOT EXISTS {table}_fts_au AFTER UPDATE ON {table} "
+            f"BEGIN INSERT INTO {index}({index}, rowid, {column}) "
+            f"VALUES ('delete', old.rowid, old.{column}); "
+            f"INSERT INTO {index}(rowid, {column}) "
+            f"VALUES (new.rowid, new.{column}); END",
+        ]
+
+    def fulltext_match(self, table: str, column: str) -> str:
+        return (f"{table}.rowid IN "
+                f"(SELECT rowid FROM {table}_fts WHERE {table}_fts MATCH ?)")
+
+    def fulltext_term(self, query: str) -> str:
+        """Quote the term so FTS5 treats it as literal text.
+
+        An unquoted query containing `"` or a bare `NEAR`/`OR` is FTS5 *syntax*
+        and raises rather than returning no rows, which would surface to the
+        user as a 500 on an ordinary search box.
+        """
+        escaped = query.replace('"', '""')
+        return f'"{escaped}"'
+
 
     def insert_ignore(self, table: str, columns: Sequence[str], conflict: str) -> str:
         cols = ", ".join(columns)

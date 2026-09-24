@@ -5,13 +5,12 @@ from __future__ import annotations
 import ast
 import importlib
 import json
-import os
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable
 
 from gyrfalcon.gyrfalcon_logging import get_logger
 from gyrfalcon.tools import registry
-from gyrfalcon.toolsets import resolve_multiple_toolsets, _GYRFALCON_CORE_TOOLS
+from gyrfalcon.toolsets import _GYRFALCON_CORE_TOOLS, resolve_multiple_toolsets
 
 logger = get_logger("model_tools")
 
@@ -49,6 +48,7 @@ def _discover_from_package() -> int:
     the agent ends up with an empty tool registry.
     """
     import pkgutil
+
     from gyrfalcon import tools as tools_pkg
 
     imported = 0
@@ -141,9 +141,27 @@ def handle_function_call(
     skip_pre_tool_call_hook: bool = False,
     plugin_manager=None,
 ) -> str:
-    """Main dispatcher. Coerces args → plugin hooks → registry dispatch → returns JSON string."""
+    """Main dispatcher. Coerces args → plugin hooks → registry dispatch → returns JSON string.
+
+    `enabled_tools` is the ceiling for a *restricted* agent: the exact set of
+    tools it was offered. None means unrestricted and changes nothing. When set,
+    a call outside it is refused before any hook or handler runs — the schema
+    shown to the model is not a boundary, because a model can name a tool it was
+    never offered — and the ceiling is passed to the handler as `allowed_tools`
+    so tools that start further work (delegate_task, scheduler) can clamp it.
+    """
     # Parse args if string
     logger.debug("Beginning of handle_function_call")
+    extra_kwargs: dict = {}
+    if enabled_tools is not None:
+        if function_name not in enabled_tools:
+            logger.warning(f"Refused call to tool outside this session's set: {function_name}")
+            return json.dumps({
+                "error": f"Tool '{function_name}' is not available in this session.",
+                "blocked": True,
+            })
+        extra_kwargs["allowed_tools"] = frozenset(enabled_tools)
+
     if isinstance(function_args, str):
         try:
             function_args = json.loads(function_args)
@@ -161,12 +179,15 @@ def handle_function_call(
         if block_result is not None:
             return json.dumps({"blocked": True, "reason": str(block_result)})
 
-    # Dispatch
-    result = registry.dispatch(
-        function_name, function_args,
-        task_id=task_id, tool_call_id=tool_call_id,
-        session_id=session_id, user_task=user_task,
-    )
+    def _dispatch() -> str:
+        return registry.dispatch(
+            function_name, function_args,
+            task_id=task_id, tool_call_id=tool_call_id,
+            session_id=session_id, user_task=user_task,
+            **extra_kwargs,
+        )
+
+    result = _resolve_approval(function_name, _dispatch(), _dispatch)
 
     # Plugin post-hook
     if plugin_manager:
@@ -180,6 +201,54 @@ def handle_function_call(
             result = transformed
 
     return result
+
+
+def _resolve_approval(tool_name: str, result: str, rerun: Callable[[], str]) -> str:
+    """Put a tool's approval request to a person, if there is one to ask.
+
+    A tool that needs approval returns `{"approval_required": true, ...}`
+    instead of acting. Until now nothing read that: it went back to the *model*,
+    which could simply rephrase the command — a guardrail against accident, not
+    against an adversary (spec 18-slack.md D3).
+
+    Where somebody can be asked — a running gateway, so a chat conversation —
+    the question is put to them and the call is re-run only if they say yes.
+    `rerun` repeats the original call exactly, arguments and all, rather than
+    rebuilding it from the refusal payload, which carries only the command.
+
+    Everywhere else (CLI, TUI, dashboard, scheduler) `ask_for_approval` returns
+    None and the payload goes to the model exactly as before, so no existing
+    interface changes behaviour.
+    """
+    if "approval_required" not in result:
+        return result
+    try:
+        payload = json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        return result
+    if not isinstance(payload, dict) or not payload.get("approval_required"):
+        return result
+
+    from gyrfalcon.gateway.approval import ask_for_approval
+    from gyrfalcon.tools.approval import approved_for_this_call
+
+    command = str(payload.get("command") or "")
+    decision = ask_for_approval(tool_name, str(payload.get("reason") or ""), command)
+    if decision is None:
+        return result
+
+    if not decision.approved:
+        detail = decision.detail or "not approved"
+        return json.dumps({
+            "error": f"Denied: {detail}." + (f" Decided by {decision.by}." if decision.by else ""),
+            "denied": True,
+        })
+
+    logger.info(f"{tool_name} approved by {decision.by or 'a user'}")
+    with approved_for_this_call(command):
+        # Not recursive: the grant is in force, so the same call cannot come
+        # back asking again, and one approval can only ever run one command.
+        return rerun()
 
 
 def coerce_tool_args(tool_name: str, args: dict) -> dict:

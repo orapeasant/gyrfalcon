@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from gyrfalcon.flow.db.base import Connection, Database, Dialect
-from gyrfalcon.flow.db.sqlite import SqliteDatabase, SqliteDialect
+from gyrfalcon.db.base import Connection, Database, Dialect
+from gyrfalcon.db.sqlite import SqliteDatabase, SqliteDialect
 
 __all__ = [
     "Connection",
@@ -211,7 +211,7 @@ def open_database(
                 "flow.store.backend is 'postgres' but flow.store.dsn is empty. "
                 "Set a DSN like postgresql://user:pass@host:5432/gyrfalcon."
             )
-        from gyrfalcon.flow.db.postgres import PostgresDatabase
+        from gyrfalcon.db.postgres import PostgresDatabase
 
         return PostgresDatabase(
             dsn,

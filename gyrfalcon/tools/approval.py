@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import re
 from typing import Optional
+
 from gyrfalcon.gyrfalcon_logging import get_logger
+
 logger = get_logger("approval")
 
 
@@ -136,6 +140,26 @@ def is_blocked(command: str) -> bool:
     return result is not None and result.startswith("BLOCKED:")
 
 
+# ── One-shot grants ──────────────────────────────────────────────────────────
+# A command a person has just approved, for the single re-run that follows.
+# Scoped to the calling context rather than stored, so it cannot leak into
+# another turn, another thread, or a later call with the same text.
+_APPROVED: contextvars.ContextVar[frozenset] = contextvars.ContextVar(
+    "gyrfalcon_approved_commands", default=frozenset()
+)
+
+
+@contextlib.contextmanager
+def approved_for_this_call(command: str):
+    """Run the block with `command` already approved. Hardline-blocked commands
+    are unaffected — those are refused whatever anyone says."""
+    token = _APPROVED.set(_APPROVED.get() | {command})
+    try:
+        yield
+    finally:
+        _APPROVED.reset(token)
+
+
 # ── Session-level allow_all flag ──────────────────────────────────────────────
 # Maps session_id → True when the user has invoked /allow-all
 _allow_all_sessions: set[str] = set()
@@ -175,14 +199,18 @@ def needs_approval_for_tool(
       4. If command string matches DANGEROUS_PATTERNS AND approval_mode != "none" → ask.
       5. Otherwise → auto-approve.
     """
-    from gyrfalcon.tools import registry as _reg
     from gyrfalcon.config import cfg_get
+    from gyrfalcon.tools import registry as _reg
 
     # Check command-level blocks first (these can never be bypassed)
     if command:
         danger = detect_dangerous_command(command)
         if danger and danger.startswith("BLOCKED:"):
             return True, danger    # unconditional block — still "needs approval" (denied)
+
+    # A command someone just approved, for this one re-run.
+    if command and command in _APPROVED.get():
+        return False, ""
 
     # allow-all bypasses everything except BLOCKED
     if is_allow_all(session_id):

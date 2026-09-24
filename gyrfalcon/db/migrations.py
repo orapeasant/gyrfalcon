@@ -32,10 +32,10 @@ import time
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable
 
-from gyrfalcon.flow.db import schema as sch
+from gyrfalcon.db import schema as sch
 
 if TYPE_CHECKING:
-    from gyrfalcon.flow.db.base import Connection, Database, Dialect
+    from gyrfalcon.db.base import Connection, Database, Dialect
 
 VERSION_TABLE = "flow_schema_version"
 
@@ -95,7 +95,7 @@ def _as_of_v1(table: "sch.Table") -> "sch.Table":
 
 
 def _v1_baseline(conn: "Connection", dialect: "Dialect") -> None:
-    """Every table as of the `flow/db/` extraction — *and nothing since*.
+    """Every table as of the `db/` extraction — *and nothing since*.
 
     `IF NOT EXISTS` makes this both the fresh-install path and the stamp for a
     database that predates versioning: an existing `flow.db` already has these
@@ -302,6 +302,26 @@ def _v6_navigation(conn: "Connection", dialect: "Dialect") -> None:
     )
 
 
+
+def _v7_sessions(conn: "Connection", dialect: "Dialect") -> None:
+    """Sessions, their messages, and per-call token usage (§19.7).
+
+    Three tables rather than two: `session_usage` records **one row per LLM
+    call**, which is what makes "where did the money go in this session"
+    answerable. The pre-existing store kept only running session totals
+    (`SET x = x + ?`), so per-call granularity was not merely unqueried, it
+    was never written down.
+
+    The full-text index is created through the dialect because SQLite's FTS5
+    and PostgreSQL's `tsvector` + GIN have nothing in common but intent
+    (§15.4). A backend that offers neither simply gets no index, and search
+    falls back to `LIKE` — slower, never wrong.
+    """
+    conn.executescript(sch.render(sch.SESSION_TABLES, dialect))
+    for statement in dialect.fulltext_ddl("session_messages", "content"):
+        conn.execute(statement)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline: flow runs, states, edges, events, deployments", _v1_baseline),
     Migration(2, "flow_run_states keyed on (run_id, seq); drop unused id", _v2_run_states_natural_key),
@@ -309,6 +329,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(4, "user_id + tenant_id on runs, events and deployments", _v4_tenancy),
     Migration(5, "identity store: orgs, users, memberships, api keys", _v5_identity),
     Migration(6, "navigation: pages, functions, menus, items, roles, versions", _v6_navigation),
+    Migration(7, "sessions, session_messages, session_usage (per-call tokens)", _v7_sessions),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1].version

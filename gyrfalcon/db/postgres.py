@@ -31,7 +31,7 @@ from contextlib import contextmanager
 from typing import Any, Iterable, Mapping, Optional, Sequence
 from urllib.parse import unquote, urlparse
 
-from gyrfalcon.flow.db.base import Connection, Database, Dialect
+from gyrfalcon.db.base import Connection, Database, Dialect
 
 #: Arbitrary but fixed key identifying "the gyrfalcon flow schema".
 MIGRATION_LOCK_KEY = 7_233_119_004
@@ -40,6 +40,29 @@ MIGRATION_LOCK_KEY = 7_233_119_004
 class PostgresDialect(Dialect):
     name = "postgres"
     supports_skip_locked = True
+    supports_fulltext = True
+
+    def fulltext_ddl(self, table: str, column: str) -> list[str]:
+        """A GIN index over `to_tsvector`.
+
+        No shadow table and no triggers: PostgreSQL computes the vector from
+        the row itself, so there is nothing to keep in sync and nothing that
+        can drift. `'simple'` rather than `'english'` deliberately — message
+        text is frequently code and identifiers, which a stemmer mangles.
+        """
+        return [
+            f"CREATE INDEX IF NOT EXISTS {table}_{column}_fts "
+            f"ON {table} USING GIN (to_tsvector('simple', coalesce({column}, '')))"
+        ]
+
+    def fulltext_match(self, table: str, column: str) -> str:
+        return (f"to_tsvector('simple', coalesce({table}.{column}, '')) "
+                f"@@ plainto_tsquery('simple', ?)")
+
+    def fulltext_term(self, query: str) -> str:
+        """`plainto_tsquery` already treats its input as plain words."""
+        return query
+
 
     def __init__(self, statement_timeout_ms: int = 30000):
         self.statement_timeout_ms = statement_timeout_ms
@@ -225,7 +248,7 @@ class PostgresDatabase(Database):
         pool_max_size: int = 10,
         statement_timeout_ms: int = 30000,
     ):
-        from gyrfalcon.flow.db import _require_pg8000
+        from gyrfalcon.db import _require_pg8000
 
         self._driver = _require_pg8000()
         self.dsn = dsn

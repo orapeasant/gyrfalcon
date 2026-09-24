@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from typing import Optional
+
 from gyrfalcon.gyrfalcon_logging import get_logger
+
 logger = get_logger("toolsets")
 
 
@@ -91,6 +93,30 @@ TOOLSETS: dict[str, dict] = {
         "tools": list(_GYRFALCON_CORE_TOOLS),
         "description": "All core tools",
     },
+    # What an agent reached over a chat platform may do (spec 18-slack.md §6.1,
+    # D3). Read-and-ask: research, recall, scheduling, delegation. Deliberately
+    # absent: terminal, execute_code, write_file, patch — anything that changes
+    # the machine — and skill_manage, which writes skill files to disk. Other
+    # people's text reaches the model on these platforms, so the set is a
+    # security boundary, and is enforced at dispatch (model_tools.py), not only
+    # in the schema shown to the model.
+    "gateway_safe": {
+        "tools": [
+            "read_file", "search_files", "session_search",
+            "web_search", "web_extract",
+            "memory", "todo", "skills_list", "skill_view",
+            "scheduler", "delegate_task", "clarify",
+        ],
+        "description": "Restricted set for chat-platform agents (no shell, no writes)",
+    },
+    "slack": {
+        "includes": ["gateway_safe"],
+        "description": "Slack — the restricted chat-platform set",
+    },
+    "teams": {
+        "includes": ["gateway_safe"],
+        "description": "Microsoft Teams — the restricted chat-platform set",
+    },
     "all": {
         "includes": ["core", "browser", "vision", "video"],
         "description": "All available tools",
@@ -154,3 +180,25 @@ def list_toolsets() -> list[str]:
     """List all available toolset names."""
     logger.debug("Beginning of list_toolsets")
     return list(TOOLSETS.keys())
+
+
+#: Toolset an agent gets on a chat platform when neither the platform's config
+#: nor a routing rule names one. Restrictive on purpose: forgetting to configure
+#: a new adapter must fail closed, not hand it a shell.
+GATEWAY_DEFAULT_TOOLSET = "gateway_safe"
+
+#: What a user in `allow.elevated` gets instead. The full core set, including
+#: the shell — reachable only because every dangerous call in it is now put to a
+#: person before it runs (spec 18-slack.md D3, Phase 2).
+ELEVATED_DEFAULT_TOOLSET = "core"
+
+#: Tools that change the machine or run arbitrary code. Naming a toolset that
+#: resolves to any of these on a chat platform is allowed — it is the operator's
+#: call — but is loud, because it makes the allowlist the only thing between a
+#: Slack message and a shell.
+DANGEROUS_TOOLS: frozenset[str] = frozenset({"terminal", "execute_code", "write_file", "patch", "skill_manage"})
+
+
+def dangerous_tools_in(toolset_names: list[str]) -> set[str]:
+    """Which of `DANGEROUS_TOOLS` the given toolsets would expose."""
+    return resolve_multiple_toolsets(toolset_names) & DANGEROUS_TOOLS

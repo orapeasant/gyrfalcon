@@ -34,10 +34,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Sequence
 
-from gyrfalcon.flow.db.scope import Scope, merge
+from gyrfalcon.db.scope import Scope, merge
 
 if TYPE_CHECKING:
-    from gyrfalcon.flow.db.base import Dialect
+    from gyrfalcon.db.base import Dialect
 
 
 def compose_where(scope: "Scope", clauses: Sequence[str] = (),
@@ -654,3 +654,160 @@ def insert_nav_version(d: "Dialect") -> str:
 FIND_API_KEY_BY_CLIENT_ID = (
     "SELECT * FROM auth_api_keys WHERE client_id = ? AND revoked_at IS NULL"
 )
+
+
+# --------------------------------------------------------------------------
+# sessions, messages and per-call usage (§19.7)
+# --------------------------------------------------------------------------
+
+SESSION_COLUMNS = (
+    "id", "source", "agent_id", "model", "parent_session_id", "title",
+    "system_prompt", "started_at", "ended_at", "last_active",
+    "uncached_input_tokens", "cache_read_tokens", "cache_write_tokens",
+    "output_tokens", "reasoning_tokens", "cost_usd", "user_id", "tenant_id",
+)
+
+SESSION_MESSAGE_COLUMNS = (
+    "id", "session_id", "seq", "role", "content", "tool_call_id", "tool_calls",
+    "tool_name", "reasoning", "created_at", "user_id", "tenant_id",
+)
+
+SESSION_USAGE_COLUMNS = (
+    "id", "session_id", "seq", "created_at", "provider", "model",
+    "uncached_input_tokens", "cache_read_tokens", "cache_write_tokens",
+    "cache_ttl", "output_tokens", "reasoning_tokens", "cost_usd",
+    "pricing_catalog_version", "user_id", "tenant_id",
+)
+
+
+def insert_session() -> str:
+    return (f"INSERT INTO sessions ({', '.join(SESSION_COLUMNS)}) "
+            f"VALUES ({placeholders(len(SESSION_COLUMNS))})")
+
+
+def insert_session_message() -> str:
+    return (f"INSERT INTO session_messages ({', '.join(SESSION_MESSAGE_COLUMNS)}) "
+            f"VALUES ({placeholders(len(SESSION_MESSAGE_COLUMNS))})")
+
+
+def insert_session_usage() -> str:
+    return (f"INSERT INTO session_usage ({', '.join(SESSION_USAGE_COLUMNS)}) "
+            f"VALUES ({placeholders(len(SESSION_USAGE_COLUMNS))})")
+
+
+def get_session(scope: "Scope") -> tuple[str, tuple]:
+    """One session by id — scoped, because "fetch by primary key" is exactly
+    where a forgotten tenant filter hides."""
+    where, params = compose_where(scope, ["id = ?"], table="sessions")
+    return f"SELECT * FROM sessions {where}", params
+
+
+def list_sessions(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope, table="sessions")
+    return (f"SELECT * FROM sessions {where} "
+            f"ORDER BY last_active DESC LIMIT ? OFFSET ?"), params
+
+
+def search_sessions_by_title(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope, ["title LIKE ?"], table="sessions")
+    return (f"SELECT * FROM sessions {where} "
+            f"ORDER BY last_active DESC LIMIT ?"), params
+
+
+def delete_session(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope, ["id = ?"], table="sessions")
+    return f"DELETE FROM sessions {where}", params
+
+
+def update_session_title(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope, ["id = ?"], table="sessions")
+    return f"UPDATE sessions SET title = ? {where}", params
+
+
+def end_session(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope, ["id = ?"], table="sessions")
+    return f"UPDATE sessions SET ended_at = ? {where}", params
+
+
+def add_session_tokens(scope: "Scope") -> tuple[str, tuple]:
+    """Accumulate a call's usage onto the session's running totals.
+
+    The per-call row in `session_usage` is the record of truth; these columns
+    exist so listing sessions does not need an aggregate per row.
+    """
+    where, params = compose_where(scope, ["id = ?"], table="sessions")
+    return (
+        "UPDATE sessions SET "
+        "uncached_input_tokens = uncached_input_tokens + ?, "
+        "cache_read_tokens = cache_read_tokens + ?, "
+        "cache_write_tokens = cache_write_tokens + ?, "
+        "output_tokens = output_tokens + ?, "
+        "reasoning_tokens = reasoning_tokens + ?, "
+        "cost_usd = cost_usd + ?, "
+        f"last_active = ? {where}"
+    ), params
+
+
+def session_messages(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope, ["session_id = ?"],
+                                  table="session_messages")
+    return (f"SELECT * FROM session_messages {where} ORDER BY seq"), params
+
+
+def next_message_seq(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope, ["session_id = ?"],
+                                  table="session_messages")
+    return (f"SELECT COALESCE(MAX(seq), -1) + 1 AS next FROM session_messages "
+            f"{where}"), params
+
+
+def next_usage_seq(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope, ["session_id = ?"],
+                                  table="session_usage")
+    return (f"SELECT COALESCE(MAX(seq), -1) + 1 AS next FROM session_usage "
+            f"{where}"), params
+
+
+def session_usage_rows(scope: "Scope") -> tuple[str, tuple]:
+    where, params = compose_where(scope, ["session_id = ?"],
+                                  table="session_usage")
+    return f"SELECT * FROM session_usage {where} ORDER BY seq", params
+
+
+def usage_by_model(scope: "Scope") -> tuple[str, tuple]:
+    """Spend per model across everything the caller may see."""
+    where, params = compose_where(scope, ["created_at >= ?"],
+                                  table="session_usage")
+    return (
+        "SELECT model, COUNT(*) AS calls, "
+        "SUM(uncached_input_tokens) AS uncached_input_tokens, "
+        "SUM(cache_read_tokens) AS cache_read_tokens, "
+        "SUM(cache_write_tokens) AS cache_write_tokens, "
+        "SUM(output_tokens) AS output_tokens, "
+        "SUM(reasoning_tokens) AS reasoning_tokens, "
+        "SUM(cost_usd) AS cost_usd "
+        f"FROM session_usage {where} GROUP BY model ORDER BY cost_usd DESC"
+    ), params
+
+
+def search_messages(scope: "Scope", match: str) -> tuple[str, tuple]:
+    """Full-text search over message content, joined to its session.
+
+    `match` is a WHERE fragment produced by `Dialect.fulltext_match` — a
+    string, not a dialect object, so this module stays free of backend types
+    and every builder here keeps the same shape: scope in, (sql, params) out.
+    FTS5 and `tsvector` share no syntax, and a backend with neither degrades
+    to `LIKE` rather than returning nothing.
+
+    Scoped through `session_messages` itself: message text is the most
+    sensitive thing in this database, so an unfiltered search would be the
+    widest possible leak.
+    """
+    where, params = compose_where(scope, [match], table="session_messages")
+    return (
+        "SELECT m.*, s.title AS session_title "
+        "FROM session_messages m "
+        "JOIN sessions s ON s.id = m.session_id "
+        f"{where.replace('session_messages.', 'm.')} "
+        "ORDER BY m.created_at DESC LIMIT ?"
+    ), params

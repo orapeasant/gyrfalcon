@@ -22,7 +22,7 @@ import pytest
 from _spec import requires, sym
 from conftest import postgres_test_dsn
 
-pytestmark = requires("gyrfalcon.flow.db.migrations:ensure_schema", section="§15.8 migrations")
+pytestmark = requires("gyrfalcon.db.migrations:ensure_schema", section="§15.8 migrations")
 
 
 def _backend_params():
@@ -54,7 +54,7 @@ def raw_db(request, tmp_path):
     leave that shape sitting in the shared database for the next test (here
     or in any other file) to inherit. Dropped on the way in AND the way out.
     """
-    open_database = sym("gyrfalcon.flow.db:open_database")
+    open_database = sym("gyrfalcon.db:open_database")
 
     if request.param == "sqlite":
         db = open_database(backend="sqlite", path=tmp_path / "flow.db")
@@ -193,12 +193,12 @@ def _seed_v1_row(conn) -> None:
 
 class TestFreshDatabase:
     def test_a_new_database_lands_at_current_version_in_one_call(self, raw_db):
-        ensure_schema = sym("gyrfalcon.flow.db.migrations:ensure_schema")
-        SCHEMA_VERSION = sym("gyrfalcon.flow.db.migrations:SCHEMA_VERSION")
+        ensure_schema = sym("gyrfalcon.db.migrations:ensure_schema")
+        SCHEMA_VERSION = sym("gyrfalcon.db.migrations:SCHEMA_VERSION")
         assert ensure_schema(raw_db) == SCHEMA_VERSION
 
     def test_ensure_schema_is_idempotent(self, raw_db):
-        ensure_schema = sym("gyrfalcon.flow.db.migrations:ensure_schema")
+        ensure_schema = sym("gyrfalcon.db.migrations:ensure_schema")
         assert ensure_schema(raw_db) == ensure_schema(raw_db)
 
 
@@ -230,7 +230,7 @@ class TestLegacyUpgrade:
         shipped. A fresh install never hits this because a fresh `flow_runs`
         already has the column by the time any index is created.
         """
-        ensure_schema = sym("gyrfalcon.flow.db.migrations:ensure_schema")
+        ensure_schema = sym("gyrfalcon.db.migrations:ensure_schema")
         with raw_db.connect() as conn:
             _create_legacy_v1(conn, raw_db.dialect)
             _seed_v1_row(conn)
@@ -245,7 +245,7 @@ class TestV2ToCurrent:
 
     @pytest.fixture()
     def v2(self, raw_db):
-        migrations = sym("gyrfalcon.flow.db.migrations")
+        migrations = sym("gyrfalcon.db.migrations")
         with raw_db.connect() as conn:
             _create_legacy_v1(conn, raw_db.dialect)
             # v2 already ran: flow_run_states lost its dead surrogate `id`.
@@ -260,13 +260,13 @@ class TestV2ToCurrent:
         return raw_db
 
     def test_upgrade_reaches_current_version(self, v2):
-        migrations = sym("gyrfalcon.flow.db.migrations")
+        migrations = sym("gyrfalcon.db.migrations")
         with v2.connect() as conn:
             assert migrations.current_version(conn, v2.dialect) == 2
         assert migrations.ensure_schema(v2) == migrations.SCHEMA_VERSION
 
     def test_no_rows_are_lost_across_any_owned_table(self, v2):
-        migrations = sym("gyrfalcon.flow.db.migrations")
+        migrations = sym("gyrfalcon.db.migrations")
         migrations.ensure_schema(v2)
         with v2.connect() as conn:
             for table in ("flow_runs", "flow_run_states", "flow_run_edges",
@@ -276,7 +276,7 @@ class TestV2ToCurrent:
 
     def test_content_and_tenancy_backfill_survive(self, v2):
         """§17.4: a row that predates tenancy is `local`'s, not nobody's."""
-        migrations = sym("gyrfalcon.flow.db.migrations")
+        migrations = sym("gyrfalcon.db.migrations")
         migrations.ensure_schema(v2)
         with v2.connect() as conn:
             run = conn.fetchone("SELECT * FROM flow_runs WHERE id = ?", ("legacy-run",))
@@ -298,7 +298,7 @@ class TestV2ToCurrent:
     def test_the_upgraded_store_is_immediately_usable(self, v2):
         """Not just "columns exist" — a real RunStore must be able to open and
         query the upgraded database without a second migration pass."""
-        migrations = sym("gyrfalcon.flow.db.migrations")
+        migrations = sym("gyrfalcon.db.migrations")
         migrations.ensure_schema(v2)
 
         RunStore = sym("gyrfalcon.flow.store:RunStore")
@@ -322,7 +322,7 @@ class TestPartialUpgrades:
 
     def test_a_v3_shaped_database_only_needs_tenancy_added(self, raw_db):
         """owner_id/heartbeat_at already present; only v4's columns are new."""
-        migrations = sym("gyrfalcon.flow.db.migrations")
+        migrations = sym("gyrfalcon.db.migrations")
         with raw_db.connect() as conn:
             _create_legacy_v1(conn, raw_db.dialect)
             # Promote to the v3 shape by hand, mirroring what _v3_run_ownership
@@ -357,7 +357,7 @@ class TestPartialUpgrades:
         separate, known-broken "a legacy-shaped table already exists" path
         covered by `TestKnownBug`. The missing tables must be created at the
         current shape, and the pre-existing row must survive untouched."""
-        schema = sym("gyrfalcon.flow.db.schema")
+        schema = sym("gyrfalcon.db.schema")
         with raw_db.connect() as conn:
             conn.executescript(schema.render((schema.FLOW_RUNS,), raw_db.dialect))
             conn.execute(
@@ -366,8 +366,8 @@ class TestPartialUpgrades:
                 ("solo", "solo-flow", "flow", "PENDING", 1.0, 1.0, "alice", "acme"),
             )
 
-        ensure_schema = sym("gyrfalcon.flow.db.migrations:ensure_schema")
-        SCHEMA_VERSION = sym("gyrfalcon.flow.db.migrations:SCHEMA_VERSION")
+        ensure_schema = sym("gyrfalcon.db.migrations:ensure_schema")
+        SCHEMA_VERSION = sym("gyrfalcon.db.migrations:SCHEMA_VERSION")
         assert ensure_schema(raw_db) == SCHEMA_VERSION
 
         with raw_db.connect() as conn:
@@ -382,7 +382,7 @@ class TestPartialUpgrades:
 
 class TestRefusesNewerSchemas:
     def test_a_schema_from_the_future_is_refused_not_silently_written_to(self, raw_db):
-        migrations = sym("gyrfalcon.flow.db.migrations")
+        migrations = sym("gyrfalcon.db.migrations")
         ensure_schema = migrations.ensure_schema
         ensure_schema(raw_db)  # bring it to current, so the version table exists
 
@@ -399,7 +399,7 @@ class TestRefusesNewerSchemas:
     def test_refusal_happens_before_any_migration_runs(self, raw_db):
         """An older process must not partially apply migrations it does
         understand before discovering the schema is ahead of it."""
-        migrations = sym("gyrfalcon.flow.db.migrations")
+        migrations = sym("gyrfalcon.db.migrations")
         with raw_db.connect() as conn:
             _create_legacy_v1(conn, raw_db.dialect)
             _seed_v1_row(conn)

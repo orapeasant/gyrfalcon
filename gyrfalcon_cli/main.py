@@ -13,7 +13,7 @@ logger = get_logger("main")
 
 SUBCOMMANDS = frozenset({
     "chat", "setup", "auth", "doctor", "version", "gateway", "scheduler", "cron",
-    "skills", "tools", "dashboard", "logs", "models",
+    "skills", "tools", "dashboard", "logs", "models", "pricing", "sessions",
 })
 
 
@@ -131,13 +131,26 @@ def main():
     sub_logs.add_argument("--list", action="store_true", help="List available log files")
     sub_models = subparsers.add_parser("models", help="List or select models")
     sub_models.add_argument("--provider", help="Filter by provider name")
+    sub_pricing = subparsers.add_parser("pricing", help="Model price catalog")
+    sub_pricing.add_argument(
+        "action", nargs="?", default="show",
+        choices=["show", "refresh"],
+        help="show the active catalog, or refresh it from the public feed",
+    )
+    sub_pricing.add_argument("--model", help="Show the resolved rates for one model")
+    sub_sessions = subparsers.add_parser("sessions", help="Session storage and token history")
+    sub_sessions.add_argument(
+        "action", nargs="?", default="status", choices=["status", "migrate"],
+        help="show storage and spend, or copy the legacy SQLite store in",
+    )
+    sub_sessions.add_argument("--session", help="Show one session's call history")
 
     args = parser.parse_args()
     _apply_run_mode(args.run_mode)
 
     # Setup logging
     from gyrfalcon.gyrfalcon_logging import setup_logging
-    setup_logging(verbose=args.verbose)
+    setup_logging(mode="gateway" if args.command == "gateway" else "cli", verbose=args.verbose)
 
     # Populate sys.modules on the main thread. In a frozen build, lazy imports
     # firing from worker threads race on PyInstaller's shared archive handle.
@@ -198,6 +211,18 @@ def main():
     if args.command == "models":
         from gyrfalcon_cli.models_cmd import run_models_cli
         run_models_cli(provider=getattr(args, "provider", None))
+        return
+
+    if args.command == "sessions":
+        from gyrfalcon_cli.sessions_cmd import run_sessions_cli
+        run_sessions_cli(action=getattr(args, "action", "status"),
+                         session_id=getattr(args, "session", None))
+        return
+
+    if args.command == "pricing":
+        from gyrfalcon_cli.pricing_cmd import run_pricing_cli
+        run_pricing_cli(action=getattr(args, "action", "show"),
+                        model=getattr(args, "model", None))
         return
 
     # Default: interactive chat

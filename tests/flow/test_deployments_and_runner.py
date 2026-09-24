@@ -420,7 +420,7 @@ class TestDeploymentTenantIsolation:
     reads — `test_scope.py`'s isolation suite only exercises `RunStore`."""
 
     def test_get_by_name_does_not_cross_tenants(self, dep_store, registered_flow):
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         f, _ = registered_flow
         with as_user("alice", "acme"):
             dep_store.create(name=f"secret_{id(f)}", flow_name=f.name)
@@ -465,7 +465,7 @@ class TestScheduledRunOwnership:
         self, dep_store, run_store, registered_flow
     ):
         Runner = sym("gyrfalcon.flow.runner:Runner")
-        Scope = sym("gyrfalcon.flow.db.scope:Scope")
+        Scope = sym("gyrfalcon.db.scope:Scope")
         f, calls = registered_flow
 
         with as_user("alice", "acme"):

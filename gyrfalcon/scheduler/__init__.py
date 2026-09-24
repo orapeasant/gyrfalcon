@@ -451,6 +451,10 @@ def _build_job(src: dict, use_llm: bool = True) -> dict:
         "deliver":             src.get("deliver", "local"),
         "origin":              src.get("origin"),
         "enabled_toolsets":    src.get("enabled_toolsets") or None,
+        # Set for jobs created by a restricted agent (a chat platform): the run
+        # then enforces its toolset at dispatch instead of only filtering the
+        # schema, and a restricted agent may only edit jobs carrying this flag.
+        "restrict_tools":      bool(src.get("restrict_tools", False)),
         "workdir":             src.get("workdir") or None,
     }
 
@@ -530,6 +534,7 @@ class Scheduler:
 
             self._store.update(job_id, updates)
             self._save_output(job_id, output)
+            self._deliver_output(job, output)
             logger.info(f"Scheduled job {job_id} completed ({completed} run(s))")
 
         except Exception as e:
@@ -575,6 +580,7 @@ class Scheduler:
             skip_memory=True,
             platform="scheduler",
             enabled_toolsets=job.get("enabled_toolsets"),
+            restrict_tools=bool(job.get("restrict_tools")),
         )
         enriched = self._build_runtime_prompt(job)
         return agent.chat(enriched)
@@ -583,6 +589,28 @@ class Scheduler:
         """Invoke a named skill."""
         from gyrfalcon.tools.skills_tool import run_skill
         return run_skill(job["skill"], job.get("prompt", ""))
+
+    def _deliver_output(self, job: dict, output: str) -> None:
+        """Send a job's result to its `deliver` target, if it has one.
+
+        Delivery failing must not fail the job: the work is done and its output
+        is already on disk. The reason is recorded on the job instead, in the
+        `last_delivery_error` field that has existed — and stayed None — since
+        before anything could deliver anything.
+        """
+        target = (job.get("deliver") or "").strip()
+        if not target or target.lower() == "local":
+            return
+
+        from gyrfalcon.gateway.delivery import deliver_from_anywhere
+
+        name = job.get("name") or job["id"]
+        result = deliver_from_anywhere(target, f"*{name}*\n\n{output}")
+        if result.ok:
+            logger.info(f"Delivered job {job['id']} output to {target}")
+        else:
+            logger.warning(f"Job {job['id']} ran, but delivery to {target} failed: {result.detail}")
+        self._store.update(job["id"], {"last_delivery_error": None if result.ok else result.detail})
 
     def _save_output(self, job_id: str, output: str) -> None:
         out_dir = _get_output_dir() / job_id

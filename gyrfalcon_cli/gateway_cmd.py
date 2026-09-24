@@ -16,12 +16,13 @@ def run_gateway():
     logger.debug("Beginning of run_gateway")
     console = Console()
 
-    from gyrfalcon.gateway import GatewayRunner, GatewayConfig
+    from gyrfalcon.gateway import GatewayConfig, GatewayRunner
 
-    config = GatewayConfig()
+    config = GatewayConfig.load()
+    enabled = [name for name, p in config.platforms.items() if p.enabled]
 
-    if config.platforms:
-        console.print(f"[bold]{get_app_name()} Gateway[/bold] — {len(config.platforms)} platform(s) configured\n")
+    if enabled:
+        console.print(f"[bold]{get_app_name()} Gateway[/bold] — {len(enabled)} platform(s): {', '.join(enabled)}\n")
     else:
         console.print(f"[bold]{get_app_name()} Gateway[/bold] — scheduler mode (no platforms configured)\n")
         console.print("[dim]Tip: add platforms under gateway.platforms in config.yaml[/dim]\n")

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets as _secrets
 import time
 from typing import Optional
@@ -197,7 +198,18 @@ def _save_secrets(entries: list[dict]) -> None:
     from gyrfalcon.gyrfalcon_constants import get_secrets_store_file
 
     p = get_secrets_store_file()
-    p.write_text(json.dumps({"secrets": entries}, indent=2), encoding="utf-8")
+    # Owner-only. This file holds values other systems accept as-is — a Slack
+    # bot token is write access to a whole workspace — and a default-umask
+    # write leaves it readable by every account on the machine. Created private
+    # rather than chmod-ed after, so there is no window; and chmod-ed anyway,
+    # because a file that already exists keeps the mode it was created with.
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"secrets": entries}, indent=2))
+    try:
+        os.chmod(p, 0o600)
+    except OSError:  # a filesystem without POSIX modes (some Windows setups)
+        pass
 
 
 def public_secret(s: dict) -> dict:

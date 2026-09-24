@@ -1,102 +1,85 @@
-"""Send message tool — push messages to users in gateway/async contexts."""
+"""Send a message to a chat platform, unprompted.
+
+For work that finishes when nobody is looking at the terminal: a long task
+started from the CLI, a flow reporting a result. Ordinary replies do not go
+through here — the gateway already sends those back the way they came.
+
+This used to call `agent_context.gateway.send_message(...)`, an interface no
+object in the codebase implemented, so it always fell through to a branch that
+logged locally and reported `"status": "sent"` — a success the caller had no
+reason to doubt and no message to show for. It now goes through the delivery
+router (`gateway/delivery.py`) and reports honestly when there is nothing to
+deliver through.
+"""
 
 from __future__ import annotations
 
 import json
-import uuid
-from typing import Optional
 
-from gyrfalcon.tools import registry
 from gyrfalcon.gyrfalcon_logging import get_logger
+from gyrfalcon.tools import registry
 
 logger = get_logger("tools.send_message")
 
 
-async def send_message(args: dict, **kwargs) -> str:
-    """Send a message to the user via the gateway."""
-    text = args.get("text", "")
-    channel = args.get("channel")
-    reply_to = args.get("reply_to")
-    format_type = args.get("format", "text")
+def send_message(args: dict, **kwargs) -> str:
+    """Send a message to a platform destination such as `slack:C0123`."""
+    text = (args.get("text") or "").strip()
+    target = (args.get("channel") or "").strip()
 
     if not text:
         return json.dumps({"error": "No text provided"})
+    if not target:
+        return json.dumps({
+            "error": "No channel provided. Give a destination like 'slack:C0123' "
+                     "(the platform, then the channel or user id)."
+        })
 
-    message_id = str(uuid.uuid4())
+    from gyrfalcon.gateway.delivery import deliver_from_anywhere, get_router, parse_target
 
-    # Try to use the gateway from agent context
-    agent_context = kwargs.get("agent_context")
-    gateway = None
+    if parse_target(target) is None:
+        return json.dumps({
+            "error": f"{target!r} is not a destination. Use '<platform>:<channel-or-user-id>', "
+                     "for example 'slack:C0123'."
+        })
 
-    if agent_context:
-        gateway = getattr(agent_context, "gateway", None) or getattr(
-            agent_context, "message_gateway", None
-        )
+    result = deliver_from_anywhere(target, text)
+    if result.ok:
+        return json.dumps({"status": "sent", "channel": target, "message_id": result.detail})
 
-    if gateway is not None:
-        try:
-            result = await gateway.send_message(
-                text=text,
-                channel=channel,
-                reply_to=reply_to,
-                format=format_type,
-                message_id=message_id,
-            )
-            return json.dumps({
-                "status": "sent",
-                "message_id": message_id,
-                "channel": channel,
-                "reply_to": reply_to,
-                "format": format_type,
-                **(result if isinstance(result, dict) else {}),
-            })
-        except Exception as e:
-            logger.error(f"Gateway send failed: {e}", exc_info=True)
-            return json.dumps({"error": f"Send failed: {str(e)}", "message_id": message_id})
-
-    # Fallback: log the message and return success (useful for testing/local mode)
-    logger.info(f"[send_message] channel={channel} reply_to={reply_to} format={format_type}: {text[:100]}")
-
+    router = get_router()
+    available = router.describe_targets() if router else []
     return json.dumps({
-        "status": "sent",
-        "message_id": message_id,
-        "channel": channel,
-        "reply_to": reply_to,
-        "format": format_type,
-        "note": "No gateway configured — message logged locally",
+        "status": "failed",
+        "channel": target,
+        "error": result.detail,
+        "connected_platforms": available,
     })
 
 
-# Register tool
 registry.register(
     name="send_message",
     toolset="gateway",
     schema={
         "name": "send_message",
-        "description": "Send a message to the user or a specific channel. Used in gateway/async contexts to push messages to platforms.",
+        "description": (
+            "Send a message to a chat platform destination, such as a Slack channel. "
+            "Use this to report the result of work the user is not watching — a long task, "
+            "or a scheduled job. Replies to a message you are already answering are sent "
+            "automatically and do not need this tool. Requires the gateway to be running."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "text": {"type": "string", "description": "Message text to send"},
                 "channel": {
                     "type": "string",
-                    "description": "Target channel or conversation ID (optional, uses default if not specified)",
-                },
-                "reply_to": {
-                    "type": "string",
-                    "description": "Message ID to reply to (for threaded conversations)",
-                },
-                "format": {
-                    "type": "string",
-                    "enum": ["text", "markdown", "html"],
-                    "default": "text",
-                    "description": "Message format",
+                    "description": "Destination as '<platform>:<id>', e.g. 'slack:C0123' or 'slack:@U0456'",
                 },
             },
-            "required": ["text"],
+            "required": ["text", "channel"],
         },
     },
     handler=send_message,
-    is_async=True,
     emoji="📨",
 )

@@ -117,6 +117,7 @@ class AIAgent:
         plugin_manager: Any | None = None,
         temperature: float | None = None,
         system_prompt_override: str | None = None,
+        restrict_tools: bool = False,
     ):
         self.base_url = base_url
         self.api_key = api_key
@@ -126,6 +127,12 @@ class AIAgent:
         self.max_tokens = max_tokens or cfg_get("model.max_tokens")
         self.enabled_toolsets = enabled_toolsets
         self.disabled_toolsets = disabled_toolsets
+        # A restricted agent's tool set is a security boundary (chat platforms,
+        # where other people's text reaches the model): calls outside what it
+        # was offered are refused at dispatch, and tools that start more work
+        # clamp it. See tools/restrictions.py. False leaves behaviour untouched.
+        self.restrict_tools = restrict_tools
+        self._offered_tools: frozenset[str] | None = None
         self.quiet_mode = quiet_mode
         self.save_trajectories = save_trajectories
         self.platform = platform or "cli"
@@ -238,6 +245,25 @@ class AIAgent:
         logger.debug("End of _get_client")
         return self._client
 
+    def _provider_api_kwargs_extras(self) -> dict:
+        """Return provider-specific request options, inferring Copilot by endpoint.
+
+        Gateway-created agents may receive Copilot credentials as a base URL and
+        token without an explicit provider name. Copilot requires its IDE headers
+        on every request, including auxiliary session-title generation.
+        """
+        provider = getattr(self, "provider", None)
+        base_url = getattr(self, "base_url", None)
+        if not provider and base_url and "githubcopilot.com" in base_url:
+            provider = "copilot"
+        if not provider:
+            return {}
+
+        from gyrfalcon.providers import get_provider_profile
+
+        profile = get_provider_profile(provider)
+        return profile.build_api_kwargs_extras() if profile else {}
+
     def _ensure_session_title(self, user_message: str, assistant_response: str) -> None:
         """Guarantee the session has a title, then refine it with the LLM.
 
@@ -268,11 +294,15 @@ class AIAgent:
                     f"Assistant: {assistant_response[:300]}"
                 )
                 client = self._get_client()
+                kwargs = {
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 64,
+                    "temperature": 0.3,
+                }
+                kwargs.update(self._provider_api_kwargs_extras())
                 resp = client.chat.completions.create(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=64,
-                    temperature=0.3,
+                    **kwargs,
                 )
                 title = _clean_title(resp.choices[0].message.content or "")
                 if title:
@@ -339,7 +369,7 @@ class AIAgent:
         # Set conversation history
         if conversation_history is not None:
             self._conversation_history = conversation_history
-        
+
         # Add user message
         self._conversation_history.append({"role": "user", "content": user_message})
 
@@ -355,6 +385,13 @@ class AIAgent:
             memory_schemas = self._memory_manager.get_tool_schemas()
             for schema in memory_schemas:
                 tools.append({"type": "function", "function": schema})
+
+        # The ceiling is the schema the model is actually shown — including the
+        # memory tools appended above — so "offered" and "callable" cannot drift.
+        if self.restrict_tools:
+            self._offered_tools = frozenset(
+                t.get("function", {}).get("name", "") for t in tools
+            ) - {""}
 
         # Pass None instead of empty list to skip tool handling entirely
         tools = tools if tools else None
@@ -524,14 +561,8 @@ class AIAgent:
             if effort and effort != "none":
                 kwargs["reasoning_effort"] = effort
 
-        # Provider-specific extras (e.g. Copilot headers)
-        if self.provider:
-            from gyrfalcon.providers import get_provider_profile
-            profile = get_provider_profile(self.provider)
-            if profile:
-                extras = profile.build_api_kwargs_extras()
-                if extras:
-                    kwargs.update(extras)
+        # Provider-specific extras (e.g. Copilot headers) apply to every LLM call.
+        kwargs.update(self._provider_api_kwargs_extras())
 
         # ── Request debug log ──────────────────────────────────────────────
         if logger.isEnabledFor(10):  # DEBUG level
@@ -790,24 +821,42 @@ class AIAgent:
 
         # Track tokens + cost
         if response.usage and self.session_db:
-            in_tok  = getattr(response.usage, "prompt_tokens", 0)
-            out_tok = getattr(response.usage, "completion_tokens", 0)
-            reason_tok = getattr(getattr(response.usage, "completion_tokens_details", None), "reasoning_tokens", 0) or 0
             from gyrfalcon.pricing import calculate_cost, usd_to_aic
-            call_cost = calculate_cost(self.model, in_tok, out_tok, reason_tok)
+            from gyrfalcon.sessions.recorder import record_call
+            from gyrfalcon.tokenomics import normalize
+
+            # `prompt_tokens` includes cached tokens on OpenAI-shaped APIs;
+            # normalize() splits them out so each part is priced at its own
+            # rate instead of all of it at the full input rate (§19.6).
+            usage = normalize("openai", response.usage)
+            call_cost = calculate_cost(
+                self.model,
+                usage.uncached_input_tokens,
+                usage.output_tokens,
+                usage.reasoning_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cache_write_tokens=usage.cache_write_tokens,
+            )
             self.session_db.update_token_counts(
                 self.session_id, # type: ignore[arg-type]
-                input_tokens=in_tok,
-                output_tokens=out_tok,
-                reasoning_tokens=reason_tok,
+                input_tokens=usage.uncached_input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cache_write_tokens=usage.cache_write_tokens,
+                reasoning_tokens=usage.reasoning_tokens,
                 cost=call_cost,
             )
             logger.info(
-                "tokens: in=%d out=%d%s | cost=%.6f USD (%.4f AIC) | model=%s",
-                in_tok, out_tok,
-                f" reason={reason_tok}" if reason_tok else "",
+                "tokens: in=%d out=%d%s%s | cost=%.6f USD (%.4f AIC) | model=%s",
+                usage.uncached_input_tokens, usage.output_tokens,
+                f" cache_read={usage.cache_read_tokens}" if usage.cache_read_tokens else "",
+                f" reason={usage.reasoning_tokens}" if usage.reasoning_tokens else "",
                 call_cost, usd_to_aic(call_cost), self.model,
             )
+            # Per-call detail, which the session's running totals cannot
+            # express (§19.7). Never raises — see `sessions/recorder.py`.
+            record_call(self.session_id, usage, model=self.model,
+                        provider="openai", cost_usd=call_cost)
 
         # Tool calls
         if message.tool_calls:
@@ -857,6 +906,7 @@ class AIAgent:
                         tool_call_id=tc.id,
                         session_id=self.session_id,
                         plugin_manager=self.plugin_manager,
+                        enabled_tools=self._offered_tools,
                     )
 
                 if self.tool_progress_callback:
@@ -902,23 +952,40 @@ class AIAgent:
 
         # Track tokens from Anthropic usage (field names differ from OpenAI)
         if hasattr(response, "usage") and response.usage and self.session_db:
-            in_tok     = getattr(response.usage, "input_tokens", 0) or 0
-            out_tok    = getattr(response.usage, "output_tokens", 0) or 0
-            reason_tok = getattr(response.usage, "cache_read_input_tokens", 0) or 0
             from gyrfalcon.pricing import calculate_cost, usd_to_aic
-            call_cost = calculate_cost(self.model, in_tok, out_tok, 0)
+            from gyrfalcon.sessions.recorder import record_call
+            from gyrfalcon.tokenomics import normalize
+
+            # Anthropic's `input_tokens` excludes both cache figures, so the
+            # cached halves are real additional prompt tokens rather than a
+            # subset — and `cache_read_input_tokens` is cache, not reasoning,
+            # which is what it used to be recorded as (§19.6).
+            usage = normalize("anthropic", response.usage)
+            call_cost = calculate_cost(
+                self.model,
+                usage.uncached_input_tokens,
+                usage.output_tokens,
+                usage.reasoning_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cache_write_tokens=usage.cache_write_tokens,
+            )
             self.session_db.update_token_counts(
                 self.session_id,  # type: ignore[arg-type]
-                input_tokens=in_tok,
-                output_tokens=out_tok,
+                input_tokens=usage.uncached_input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cache_write_tokens=usage.cache_write_tokens,
                 cost=call_cost,
             )
             logger.info(
-                "tokens: in=%d out=%d%s | cost=%.6f USD (%.4f AIC) | model=%s",
-                in_tok, out_tok,
-                f" cache_read={reason_tok}" if reason_tok else "",
+                "tokens: in=%d out=%d%s%s | cost=%.6f USD (%.4f AIC) | model=%s",
+                usage.uncached_input_tokens, usage.output_tokens,
+                f" cache_read={usage.cache_read_tokens}" if usage.cache_read_tokens else "",
+                f" cache_write={usage.cache_write_tokens}" if usage.cache_write_tokens else "",
                 call_cost, usd_to_aic(call_cost), self.model,
             )
+            record_call(self.session_id, usage, model=self.model,
+                        provider="anthropic", cost_usd=call_cost)
 
         # Check for tool use
         tool_uses = [block for block in response.content if block.type == "tool_use"]
@@ -965,6 +1032,7 @@ class AIAgent:
                         tool_call_id=tu.id,
                         session_id=self.session_id,
                         plugin_manager=self.plugin_manager,
+                        enabled_tools=self._offered_tools,
                     )
 
                 if self.tool_progress_callback:

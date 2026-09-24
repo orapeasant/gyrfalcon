@@ -18,6 +18,10 @@ dependencies = [
     "rich>=13.7",
     "prompt-toolkit>=3.0",
     "fastapi>=0.115.0",
+    # Required by FastAPI at import time for the multipart upload route
+    # (tokenomics document upload, §19.5.3) — not optional, because the
+    # route is registered unconditionally.
+    "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.30.0",
     "websockets>=12.0",
     "pydantic>=2.7",
@@ -32,6 +36,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.46b0",
     "opentelemetry-instrumentation-httpx>=0.46b0",
     "opentelemetry-exporter-otlp>=1.25.0",
+    "pg8000>=1.31.5",
 ]
 
 [project.optional-dependencies]
@@ -47,8 +52,39 @@ dev = [
 postgres = [
     "pg8000>=1.31",
 ]
+# Slack gateway adapter (spec 18-slack.md §2). Optional for the same reason:
+# a platform nobody enabled should not cost anyone a dependency. Socket Mode
+# needs slack_sdk's aiohttp transport.
+slack = [
+    "slack_sdk>=3.27",
+    "aiohttp>=3.9",
+]
+# Microsoft Teams bot hosting, JWT validation, and proactive replies.
+teams = [
+    "microsoft-teams-apps>=2.1.0,<3",
+]
 flow-samples = [
     "langgraph>=1.2.11",
+]
+# Exact token counting (spec 19-tokenomics.md §19.5.1). Optional on purpose:
+# Claude counts via the free `count_tokens` API using the `anthropic` core
+# dependency, so the estimator works for Claude with nothing extra installed.
+# These cover the families that *do* have a local tokenizer.
+tokenizers = [
+    "tiktoken>=0.8",        # OpenAI / GPT
+    "tokenizers>=0.20",     # Llama, Mistral, Qwen, DeepSeek, Gemma
+]
+# Gemini's local SentencePiece vocabulary ships inside the Vertex AI SDK,
+# which is a heavy dependency — separated so it can be opted into alone.
+tokenizers-gemini = [
+    "google-cloud-aiplatform[tokenization]>=1.57",
+]
+# Text extraction for uploaded documents (§19.5.3). Plain text, Markdown and
+# source files need none of this.
+documents = [
+    "pypdf>=5",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
 ]
 
 [project.scripts]

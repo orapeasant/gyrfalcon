@@ -25,9 +25,9 @@ import time
 import uuid
 from typing import Optional, Sequence
 
-from gyrfalcon.flow.db import open_database, resolve_target, sql
-from gyrfalcon.flow.db.migrations import ensure_schema
-from gyrfalcon.flow.db.scope import Scope, current_scope
+from gyrfalcon.db import open_database, resolve_target, sql
+from gyrfalcon.db.migrations import ensure_schema
+from gyrfalcon.db.scope import Scope, current_scope
 from gyrfalcon.nav import resolver
 from gyrfalcon.nav.models import (
     WRITE,

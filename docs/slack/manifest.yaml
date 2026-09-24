@@ -1,0 +1,47 @@
+# Slack app manifest for Gyrfalcon (Socket Mode).
+#
+# Create the app:  https://api.slack.com/apps  ->  Create New App  ->  From a manifest
+# then paste this file. Full walkthrough: docs/slack/README.md
+#
+# Scopes are the minimum the adapter uses. Each is annotated with what breaks
+# without it, so they can be removed deliberately rather than by guesswork.
+display_information:
+  name: Gyrfalcon
+  description: Your Gyrfalcon agent, in Slack
+  background_color: "#1f2937"
+
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true            # lets people DM the bot
+    messages_tab_read_only_enabled: false # ...and lets the DM box be typed in
+  bot_user:
+    display_name: Gyrfalcon
+    always_online: true
+
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read   # @Gyrfalcon in a channel
+      - chat:write          # post replies
+      - im:history          # read DMs sent to the bot
+      - channels:history    # follow-ups in a public-channel thread without re-mentioning
+      - groups:history      # ...same, private channels
+      - mpim:history        # ...same, group DMs
+      - channels:read       # channel names, so routing rules like ^#ops can match (ids work without)
+      - groups:read         # ...same, private channels
+      - reactions:write     # progress reactions on your message (hourglass, check, cross)
+
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+      - message.channels    # drop these three (and the *:history scopes) if you never want the bot
+      - message.groups      # to see channel traffic; thread follow-ups will then need an @mention
+      - message.mpim        # each time (set respond_to.threads: false)
+  interactivity:
+    is_enabled: true        # the Approve / Deny buttons on dangerous tool calls
+  org_deploy_enabled: false
+  socket_mode_enabled: true # no public URL needed
+  token_rotation_enabled: false

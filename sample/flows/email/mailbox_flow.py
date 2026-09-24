@@ -82,7 +82,7 @@ def load_mailbox_config() -> Optional[MailboxConfig]:
 #
 # One integer per (account, folder). A JSON file under GYRFALCON_HOME rather
 # than a flow DB table on purpose: a table would need a forward-only entry in
-# `flow/db/migrations.py`, which is a lot of ceremony for one integer.
+# `db/migrations.py`, which is a lot of ceremony for one integer.
 
 def _state_path() -> Path:
     d = get_gyrfalcon_home() / "email"

@@ -8,9 +8,9 @@ nothing for an operator to cancel, no history to query, and nothing to recover
 after a restart. Everything downstream (the API, the run graph, cancellation)
 reads from here.
 
-Storage is reached through `flow/db/` (§15): this module owns *what a
+Storage is reached through `db/` (§15): this module owns *what a
 transition means* and nothing about how rows are written. The SQL it runs
-lives in `flow/db/sql.py`, so the same statements serve SQLite and PostgreSQL
+lives in `db/sql.py`, so the same statements serve SQLite and PostgreSQL
 without a second copy to keep in step.
 """
 
@@ -23,10 +23,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from gyrfalcon.db import open_database, resolve_target, sql
+from gyrfalcon.db.migrations import ensure_schema
+from gyrfalcon.db.scope import Scope, current_scope
 from gyrfalcon.flow import states as st
-from gyrfalcon.flow.db import open_database, resolve_target, sql
-from gyrfalcon.flow.db.migrations import ensure_schema
-from gyrfalcon.flow.db.scope import Scope, current_scope
 from gyrfalcon.flow.states import State, StateType
 from gyrfalcon.identity import require_principal
 

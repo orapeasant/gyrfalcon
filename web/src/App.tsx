@@ -4,7 +4,7 @@
 import React, { useState, useEffect } from "react";
 import { Routes, Route, NavLink, Navigate, useLocation, useNavigate } from "react-router-dom";
 import {
-  MessageSquare, History, BarChart2, Cpu, Server,
+  MessageSquare, History, BarChart2, Calculator, Cpu, Server,
   BookOpen, Puzzle, Clock, Users, Settings, ScrollText,
   ChevronDown, ChevronRight, Zap, Wrench, Home,
   PanelLeftClose, PanelLeftOpen, AppWindow, Sun, Moon,
@@ -16,6 +16,7 @@ import { ChatPage }      from "./pages/ChatPage";
 import { SessionsPage }  from "./pages/SessionsPage";
 import { ConfigPage }    from "./pages/ConfigPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { TokenomicsPage } from "./pages/TokenomicsPage";
 import { SchedulerPage }      from "./pages/SchedulerPage";
 import { SkillsPage }    from "./pages/SkillsPage";
 import { APP_NAME, APP_SUBTITLE, ORG_NAME } from "./lib/constants";
@@ -49,6 +50,7 @@ const NAV: NavDef[] = [
   { type: "item", path: "/chat",      label: "Chat",      icon: MessageSquare },
   { type: "item", path: "/sessions",  label: "Sessions",  icon: History },
   { type: "item", path: "/analytics", label: "Analytics", icon: BarChart2 },
+  { type: "item", path: "/tokenomics", label: "Tokenomics", icon: Calculator },
   {
     // Single top-level entry named "Flow" (15-flow.md §14); everything else
     // nests beneath it. Placed above "AI Engine": flows are a business
@@ -92,6 +94,7 @@ const NAV: NavDef[] = [
 
 const PATH_LABELS: Record<string, string> = {
   chat: "Chat", sessions: "Sessions", analytics: "Analytics",
+  tokenomics: "Tokenomics",
   models: "Models",   mcp: "MCP Servers", agents: "Agents", skills: "Skills",
   plugins: "Plugins", scheduler: "Scheduler", profiles: "Profiles",
   config: "Configurations", logs: "Logs",
@@ -395,7 +398,7 @@ function NavApplicationsSection({ collapsed }: { collapsed: boolean }) {
           display: "flex", alignItems: "center",
           padding: "6px 16px",
           margin: "4px 0 1px 0",
-          fontSize: "11px", fontWeight: 600, textTransform: "uppercase",
+          fontSize: "11px", fontWeight: 600,
           letterSpacing: "0.08em",
           color: anyActive ? "var(--fg)" : "var(--fg-muted)",
           cursor: "pointer", userSelect: "none",
@@ -628,6 +631,7 @@ export function App() {
             <Route path="/chat"      element={<ChatPage />} />
             <Route path="/sessions"  element={<ScrollPage><SessionsPage /></ScrollPage>} />
             <Route path="/analytics" element={<ScrollPage><AnalyticsPage /></ScrollPage>} />
+            <Route path="/tokenomics" element={<ScrollPage><TokenomicsPage /></ScrollPage>} />
             <Route path="/models"    element={<ScrollPage><ModelsPage /></ScrollPage>} />
             <Route path="/mcp"       element={<McpPage />} />
             <Route path="/agents"    element={<AgentsPage />} />

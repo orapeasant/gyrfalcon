@@ -7,6 +7,7 @@ import json
 from gyrfalcon.tools import registry
 from gyrfalcon.scheduler import job_store
 from gyrfalcon.gyrfalcon_logging import get_logger
+from gyrfalcon.tools.restrictions import NO_TOOLS
 
 logger = get_logger("tools.scheduler")
 
@@ -41,6 +42,21 @@ def scheduler_tool(args: dict, **kwargs) -> str:
     logger.debug("Beginning of scheduler_tool")
     action = args.get("action", "list")
 
+    # A restricted caller (a chat-platform agent) starts jobs no wider than
+    # itself, and may only rewrite or delete jobs that carry its own
+    # restriction. Otherwise a job created with the default toolset — which
+    # includes the shell — is a one-step escalation, and editing an existing
+    # unrestricted job's prompt hands that job's privileges to whoever
+    # controls the text.
+    allowed = kwargs.get("allowed_tools")
+    if allowed is not None and action in ("update", "remove"):
+        existing = job_store.get(args.get("job_id", ""))
+        if existing and not existing.get("restrict_tools"):
+            return json.dumps({
+                "error": f"Job {args.get('job_id')} was not created from a restricted session; "
+                         f"it cannot be {'edited' if action == 'update' else 'removed'} from here."
+            })
+
     if action == "list":
         jobs = job_store.list_all()
         return json.dumps({"jobs": jobs, **_scheduler_runtime_state()})
@@ -66,6 +82,9 @@ def scheduler_tool(args: dict, **kwargs) -> str:
             "no_agent": args.get("no_agent", False),
             "skills": args.get("skills", []),
         }
+        if allowed is not None:
+            job["enabled_toolsets"] = sorted(allowed) or [NO_TOOLS]
+            job["restrict_tools"] = True
         job_id = job_store.add(job)
         created = job_store.get(job_id) or {}
         sched = created.get("schedule") or {}

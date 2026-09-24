@@ -9,6 +9,7 @@ from typing import Optional
 from gyrfalcon.tools import registry
 from gyrfalcon.gyrfalcon_logging import get_logger
 from gyrfalcon.config import cfg_get
+from gyrfalcon.tools.restrictions import clamp_toolsets
 
 logger = get_logger("tools.delegate")
 
@@ -33,6 +34,15 @@ def delegate_task(args: dict, **kwargs) -> str:
     # Leaf agents cannot delegate further
     leaf_disabled_toolsets = ["delegation"] if role == "leaf" else None
 
+    # A restricted caller (a chat-platform agent) cannot hand a child more than
+    # it holds. Without this, `toolsets` — which is model-supplied — or its
+    # absence, which means the full default set including the shell, would be a
+    # way around the ceiling with a single tool call. The child is itself
+    # restricted, so the clamp holds through further nesting.
+    allowed = kwargs.get("allowed_tools")
+    restricted = allowed is not None
+    toolsets = clamp_toolsets(toolsets, allowed)
+
     from gyrfalcon.run_agent import AIAgent
 
     if tasks:
@@ -55,6 +65,7 @@ def delegate_task(args: dict, **kwargs) -> str:
                     skip_context_files=True,
                     skip_memory=True,
                     platform="delegation",
+                    restrict_tools=restricted,
                 )
 
                 prompt = f"Task: {task_goal}"
@@ -88,6 +99,7 @@ def delegate_task(args: dict, **kwargs) -> str:
             skip_context_files=True,
             skip_memory=True,
             platform="delegation",
+            restrict_tools=restricted,
         )
 
         prompt = f"Task: {goal}"

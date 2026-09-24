@@ -118,8 +118,8 @@ def store_target(request, tmp_path) -> dict:
         return {"db_path": tmp_path / "flow.db"}
 
     dsn = postgres_test_dsn()
-    from gyrfalcon.flow.db import open_database
-    from gyrfalcon.flow.db import schema as sch
+    from gyrfalcon.db import open_database
+    from gyrfalcon.db import schema as sch
 
     db = open_database(backend="postgres", dsn=dsn)
     try:
