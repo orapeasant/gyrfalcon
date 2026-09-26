@@ -9,7 +9,7 @@ import pytest
 from _spec import requires, sym
 
 pytestmark = requires(
-    "gyrfalcon.flow:task",
+    "gyrfalcon.flow:activity",
     "gyrfalcon.flow.cache:CachePolicy",
     section="§5, §6",
 )
@@ -20,9 +20,9 @@ pytestmark = requires(
 class TestFutures:
     def test_future_identity_is_a_run_id_not_an_object_handle(self):
         """§5.1: identity is server-side, so a future survives a process boundary."""
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def t(x):
             return x
 
@@ -31,9 +31,9 @@ class TestFutures:
 
     def test_future_is_reconstructable_from_its_id(self):
         rehydrate = sym("gyrfalcon.flow.futures:future_from_id")
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def t(x):
             return x * 3
 
@@ -45,10 +45,10 @@ class TestFutures:
 
 class TestMapAnnotations:
     def test_unmapped_broadcasts_instead_of_iterating(self):
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         unmapped = sym("gyrfalcon.flow.annotations:unmapped")
 
-        @task
+        @activity
         def t(item, config):
             return (item, config)
 
@@ -58,11 +58,11 @@ class TestMapAnnotations:
         ]
 
     def test_map_raises_when_nothing_is_iterable(self):
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         unmapped = sym("gyrfalcon.flow.annotations:unmapped")
         MappingMissingIterable = sym("gyrfalcon.flow.exceptions:MappingMissingIterable")
 
-        @task
+        @activity
         def t(a, b):
             return a
 
@@ -71,14 +71,14 @@ class TestMapAnnotations:
 
     def test_allow_failure_passes_a_failed_upstream_through(self):
         """Without it, a failed upstream propagates instead of being handled."""
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         allow_failure = sym("gyrfalcon.flow.annotations:allow_failure")
 
-        @task
+        @activity
         def boom():
             raise RuntimeError("upstream failed")
 
-        @task
+        @activity
         def downstream(up):
             return type(up).__name__
 
@@ -90,14 +90,14 @@ class TestMapAnnotations:
 
 class TestDependencies:
     def test_passing_a_future_creates_an_implicit_edge(self):
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         graph_edges = sym("gyrfalcon.flow.futures:edges_for")
 
-        @task
+        @activity
         def upstream():
             return 1
 
-        @task
+        @activity
         def downstream(x):
             return x + 1
 
@@ -106,14 +106,14 @@ class TestDependencies:
         assert up.task_run_id in graph_edges(down.task_run_id)
 
     def test_wait_for_creates_ordering_without_data_flow(self):
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         graph_edges = sym("gyrfalcon.flow.futures:edges_for")
 
-        @task
+        @activity
         def a():
             return 1
 
-        @task
+        @activity
         def b():
             return 2
 
@@ -187,10 +187,10 @@ class TestCachePolicies:
 
     def test_cache_policy_forces_result_persistence(self):
         """§6.1: caching without persistence is meaningless."""
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         policies = sym("gyrfalcon.flow.cache")
 
-        @task(cache_policy=policies.INPUTS, persist_result=False)
+        @activity(cache_policy=policies.INPUTS, persist_result=False)
         def t(x):
             return x
 
@@ -217,9 +217,9 @@ class TestTransactions:
     def test_later_failure_rolls_back_earlier_step(self, recorder):
         """§6.3: the compensating-action pattern."""
         transaction = sym("gyrfalcon.flow.transactions:transaction")
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def step_one():
             recorder.record("one")
 
@@ -227,7 +227,7 @@ class TestTransactions:
         def _rb(txn):
             recorder.record("rollback-one")
 
-        @task
+        @activity
         def step_two():
             raise RuntimeError("boom")
 

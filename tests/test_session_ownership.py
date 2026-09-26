@@ -8,14 +8,20 @@ column now carries the owning principal, and every read filters on it.
 from __future__ import annotations
 
 import pytest
+import os
 
 from gyrfalcon.gyrfalcon_state import SessionDB
 from gyrfalcon.identity import Principal, use_principal
 
+TEST_PG_DSN = os.environ.get("GYRFALCON_TEST_PG_DSN")
+pytestmark = pytest.mark.skipif(not TEST_PG_DSN, reason="Disposable PostgreSQL test DSN required")
+
 
 @pytest.fixture()
-def db(tmp_path):
-    d = SessionDB(tmp_path / "sessions.db")
+def db():
+    d = SessionDB(dsn=TEST_PG_DSN)
+    with d._db.connect() as conn:
+        conn.execute("TRUNCATE ai_session_messages, ai_session_usage, ai_sessions RESTART IDENTITY CASCADE")
     yield d
     d.close() if hasattr(d, "close") else None
 
@@ -114,22 +120,3 @@ class TestOwnership:
             db.append_message(sid, "user", "alice secret plan")
         with as_user("bob"):
             assert db.get_messages_as_conversation(sid) == []
-
-
-class TestLegacyRows:
-    def test_pre_identity_sessions_are_claimed_for_local(self, tmp_path):
-        """Rows written before identity existed have user_id NULL. They must
-        become `local`, not vanish behind a filter that never matches."""
-        import sqlite3
-
-        path = tmp_path / "legacy.db"
-        db = SessionDB(path)
-        sid = db.create_session(source="chat", title="old")
-        raw = sqlite3.connect(path)
-        raw.execute("UPDATE sessions SET user_id = NULL WHERE id = ?", (sid,))
-        raw.commit()
-        raw.close()
-
-        reopened = SessionDB(path)
-        assert reopened.get_session(sid) is not None
-        assert reopened.get_session(sid)["user_id"] == "local"

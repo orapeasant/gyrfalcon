@@ -108,9 +108,9 @@ class TestConsistencyModels:
 
     def test_task_authority_is_overridable_per_step(self):
         """§13.2: make it a per-step property, not a global architecture choice."""
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task(server_authoritative_state=True)
+        @activity(server_authoritative_state=True)
         def agent_step():
             return 1
 

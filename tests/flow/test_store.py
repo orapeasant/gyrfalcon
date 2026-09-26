@@ -83,9 +83,9 @@ class TestRunRecords:
 
     def test_tasks_are_linked_to_their_flow_run(self, persisted):
         flow = sym("gyrfalcon.flow:flow")
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def child(i):
             return i
 
@@ -160,9 +160,9 @@ class TestQuerying:
 
     def test_graph_returns_nodes_and_edges(self, persisted):
         flow = sym("gyrfalcon.flow:flow")
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def child():
             return 1
 
@@ -246,9 +246,9 @@ class TestSubmittedTaskParentLinkage:
 
     def test_submitted_task_is_linked_to_its_parent_flow(self, persisted):
         flow = sym("gyrfalcon.flow:flow")
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def child(i):
             return i * 10
 
@@ -267,9 +267,9 @@ class TestSubmittedTaskParentLinkage:
 
     def test_mapped_tasks_are_linked_to_their_parent_flow(self, persisted):
         flow = sym("gyrfalcon.flow:flow")
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def double(x):
             return x * 2
 

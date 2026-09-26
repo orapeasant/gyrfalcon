@@ -8,7 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import {
   Plus, Trash2, X, Play, RefreshCw, Copy, Eye, EyeOff,
-  ExternalLink, Globe, Edit2, Users,
+  ExternalLink, Globe, Edit2, Users, LayoutGrid, List,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -98,8 +98,9 @@ function MultiSelect({
 }
 
 // ── Agent Card ────────────────────────────────────────────────────────────────
-function AgentCard({ agent, onInvoke, onEdit, onDelete, onCopy }: {
+function AgentCard({ agent, layout, onInvoke, onEdit, onDelete, onCopy }: {
   agent: Agent;
+  layout: "cards" | "list";
   onInvoke: (a: Agent) => void;
   onEdit:   (a: Agent) => void;
   onDelete: (a: Agent) => void;
@@ -123,11 +124,20 @@ function AgentCard({ agent, onInvoke, onEdit, onDelete, onCopy }: {
   return (
     <div style={{
       background: "var(--sidebar-bg)", border: "1px solid var(--border)",
-      borderRadius: "10px", padding: "1rem 1.1rem",
-      display: "flex", flexDirection: "column", gap: "8px",
+      borderRadius: layout === "cards" ? "7px" : "0", padding: layout === "cards" ? "0.55rem" : "0.45rem 0.65rem",
+      boxSizing: "border-box",
+      display: layout === "cards" ? "flex" : "grid",
+      flexDirection: layout === "cards" ? "column" : undefined,
+      gridTemplateColumns: layout === "list" ? "minmax(200px, 1.1fr) minmax(150px, 1fr) minmax(180px, 1fr)" : undefined,
+      gridTemplateAreas: layout === "list" ? '"identity tags gateway"' : undefined,
+      alignItems: layout === "list" ? "center" : undefined,
+      gap: "8px",
+      aspectRatio: layout === "cards" ? "1 / 1" : undefined,
+      minHeight: layout === "cards" ? "140px" : "58px",
+      overflow: layout === "cards" ? "auto" : "hidden",
     }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", gridArea: layout === "list" ? "identity" : undefined, minWidth: 0 }}>
         {/* Avatar */}
         <div style={{
           width: "36px", height: "36px", borderRadius: "8px",
@@ -203,7 +213,7 @@ function AgentCard({ agent, onInvoke, onEdit, onDelete, onCopy }: {
       </div>
 
       {/* Chips */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", gridArea: layout === "list" ? "tags" : undefined, overflow: "hidden", maxHeight: layout === "cards" ? "58px" : "72px" }}>
         {(agent.skills || []).map(s => (
           <span key={s} style={{ fontSize: "0.72rem", padding: "1px 7px", borderRadius: "10px", background: "var(--sidebar-active)", color: "var(--fg-muted)", border: "1px solid var(--border)" }}>📚 {s}</span>
         ))}
@@ -220,7 +230,7 @@ function AgentCard({ agent, onInvoke, onEdit, onDelete, onCopy }: {
 
       {/* Gateway */}
       {agent.gateway?.enabled && (
-        <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "6px", padding: "8px 10px", fontSize: "0.78rem" }}>
+        <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "6px", padding: "8px 10px", fontSize: "0.78rem", gridArea: layout === "list" ? "gateway" : undefined, minWidth: 0, overflow: "hidden" }}>
           <div style={{ color: "var(--fg-muted)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "4px" }}>
             <Globe size={11} /> Gateway Endpoint
           </div>
@@ -377,6 +387,13 @@ export function AgentsPage() {
 
   // View mode: "list" (card grid) | "edit"
   const [view, setView] = useState<"list" | "edit">("list");
+  const [agentLayout, setAgentLayout] = useState<"cards" | "list">(() =>
+    localStorage.getItem("gyrfalcon-agents-layout") === "list" ? "list" : "cards"
+  );
+
+  useEffect(() => {
+    localStorage.setItem("gyrfalcon-agents-layout", agentLayout);
+  }, [agentLayout]);
 
   useEffect(() => { load(); loadOptions(); }, []);
 
@@ -493,6 +510,12 @@ export function AgentsPage() {
         background: "var(--sidebar-bg)", flexShrink: 0,
       }}>
         <span style={{ fontWeight: 700, fontSize: "0.92rem", flex: 1 }}>Agents</span>
+        {view === "list" && (
+          <div role="group" aria-label="Agent layout" style={{ display: "flex", border: "1px solid var(--border)", borderRadius: "6px", overflow: "hidden" }}>
+            <button type="button" onClick={() => setAgentLayout("cards")} aria-label="Card view" aria-pressed={agentLayout === "cards"} title="Card view" style={{ background: agentLayout === "cards" ? "var(--sidebar-active)" : "transparent", color: "var(--fg)", border: 0, padding: "5px 8px", cursor: "pointer", display: "flex" }}><LayoutGrid size={15} /></button>
+            <button type="button" onClick={() => setAgentLayout("list")} aria-label="List view" aria-pressed={agentLayout === "list"} title="List view" style={{ background: agentLayout === "list" ? "var(--sidebar-active)" : "transparent", color: "var(--fg)", border: 0, borderLeft: "1px solid var(--border)", padding: "5px 8px", cursor: "pointer", display: "flex" }}><List size={15} /></button>
+          </div>
+        )}
         {view === "edit" && (
           <button onClick={cancelEdit} style={{
             background: "transparent", border: "1px solid var(--border)",
@@ -512,7 +535,7 @@ export function AgentsPage() {
         </button>
       </div>
 
-      {/* ── Card grid ── */}
+      {/* ── Agent cards or list ── */}
       {view === "list" && (
         <div style={{ flex: 1, overflow: "auto", padding: "1.25rem" }}>
           {loading && <div style={{ color: "var(--fg-muted)" }}>Loading…</div>}
@@ -522,9 +545,11 @@ export function AgentsPage() {
               <div>No agents yet. Click <strong>New Agent</strong> to create one.</div>
             </div>
           )}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1rem" }}>
+          <div style={agentLayout === "cards"
+            ? { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "8px", alignItems: "start" }
+            : { display: "flex", flexDirection: "column", gap: "0.65rem" }}>
             {agents.map(a => (
-              <AgentCard key={a.id} agent={a}
+              <AgentCard key={a.id} agent={a} layout={agentLayout}
                 onInvoke={a => setInvokeTarget(a)}
                 onEdit={a => selectAgent(a)}
                 onDelete={async a => { await api.deleteAgent(a.id); await load(); }}

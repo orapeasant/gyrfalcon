@@ -41,6 +41,7 @@ from email.utils import getaddresses
 from typing import Any, Callable, Optional
 
 from mail_db import MailDB, get_mail_db, new_id
+from gyrfalcon.db import sql
 
 logger = logging.getLogger("gyrfalcon.flow.email.classify")
 
@@ -77,7 +78,7 @@ def resolve_thread_id(db: MailDB, message_id: str, in_reply_to: str,
         if not parent_id or parent_id in seen:
             continue
         seen.add(parent_id)
-        row = db.fetchone("SELECT thread_id FROM emails WHERE id = ?", (parent_id,))
+        row = db.fetchone(sql.MAIL_THREAD, (parent_id,))
         if row is not None:
             return row["thread_id"]
     return message_id  # no known parent: this message is its own thread root
@@ -109,11 +110,7 @@ def store_message(db: MailDB, msg: dict[str, Any]) -> tuple[str, bool]:
     direction = classify_direction(in_reply_to, references, msg.get("subject", ""))
 
     cur = db.execute(
-        "INSERT OR IGNORE INTO emails "
-        "(id, account, folder, uid, thread_id, in_reply_to, references_ids, "
-        " from_addr, to_addr, subject, date_header, body_text, raw_headers, "
-        " direction, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        sql.MAIL_INSERT,
         (
             message_id, msg.get("account", ""), msg.get("folder", ""),
             msg.get("uid"), thread_id, in_reply_to, json.dumps(references),
@@ -178,8 +175,7 @@ def classify_email(db: MailDB, email_id: str, msg: dict[str, Any],
     labels = []
     for label, confidence in hits:
         db.execute(
-            "INSERT OR IGNORE INTO email_classifications "
-            "(email_id, label, confidence, source, created_at) VALUES (?,?,?,?,?)",
+            sql.MAIL_CLASSIFY,
             (email_id, label, confidence, source, now),
         )
         labels.append(label)
@@ -193,26 +189,18 @@ def set_flow_mapping(db: MailDB, label: str, flow_name: str,
     now = time.time()
     params_json = json.dumps(parameters or {})
     db.execute(
-        "INSERT INTO classification_flow_map (label, flow_name, enabled, parameters, "
-        " created_at, updated_at) VALUES (?,?,?,?,?,?) "
-        "ON CONFLICT(label) DO UPDATE SET flow_name=excluded.flow_name, "
-        " enabled=excluded.enabled, parameters=excluded.parameters, "
-        " updated_at=excluded.updated_at",
+        sql.MAIL_SET_FLOW_MAPPING,
         (label, flow_name, int(enabled), params_json, now, now),
     )
 
 
 def get_flow_mapping(db: MailDB, label: str) -> Optional[dict[str, Any]]:
-    row = db.fetchone(
-        "SELECT * FROM classification_flow_map WHERE label = ?", (label,)
-    )
+    row = db.fetchone(sql.MAIL_GET_FLOW_MAPPING, (label,))
     return dict(row) if row else None
 
 
 def list_flow_mappings(db: MailDB) -> list[dict[str, Any]]:
-    return [dict(r) for r in db.fetchall(
-        "SELECT * FROM classification_flow_map ORDER BY label"
-    )]
+    return [dict(r) for r in db.fetchall(sql.MAIL_LIST_FLOW_MAPPINGS)]
 
 
 # ── Dispatch ──────────────────────────────────────────────────────────────
@@ -220,8 +208,7 @@ def list_flow_mappings(db: MailDB) -> list[dict[str, Any]]:
 def _record_dispatch(db: MailDB, email_id: str, label: str, flow_name: str,
                       run_id: Optional[str], status: str, detail: str = "") -> None:
     db.execute(
-        "INSERT INTO email_dispatches (id, email_id, label, flow_name, run_id, "
-        " status, detail, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        sql.MAIL_RECORD_DISPATCH,
         (new_id(), email_id, label, flow_name, run_id, status, detail, time.time()),
     )
 
@@ -288,7 +275,7 @@ def ingest_message(msg: dict[str, Any], db: Optional[MailDB] = None) -> dict[str
     if not inserted:
         return {"email_id": email_id, "status": "duplicate"}
 
-    row = db.fetchone("SELECT thread_id FROM emails WHERE id = ?", (email_id,))
+    row = db.fetchone(sql.MAIL_THREAD, (email_id,))
     thread_id = row["thread_id"] if row else email_id
 
     labels = classify_email(db, email_id, msg)

@@ -57,7 +57,7 @@ class Table:
 # --------------------------------------------------------------------------
 
 FLOW_RUNS = Table(
-    name="fnd_flow_runs",
+    name="flow_runs",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("name", "TEXT", "NOT NULL"),
@@ -90,14 +90,14 @@ FLOW_RUNS = Table(
         Column("definition_version", "INTEGER"),
     ),
     indexes=(
-        Index("idx_runs_state", "fnd_flow_runs", "state_type"),
-        Index("idx_runs_created", "fnd_flow_runs", "created_at DESC"),
-        Index("idx_runs_parent", "fnd_flow_runs", "parent_run_id"),
-        Index("idx_runs_flow", "fnd_flow_runs", "flow_run_id"),
-        Index("idx_runs_heartbeat", "fnd_flow_runs", "heartbeat_at"),
+        Index("idx_runs_state", "flow_runs", "state_type"),
+        Index("idx_runs_created", "flow_runs", "created_at DESC"),
+        Index("idx_runs_parent", "flow_runs", "parent_run_id"),
+        Index("idx_runs_flow", "flow_runs", "flow_run_id"),
+        Index("idx_runs_heartbeat", "flow_runs", "heartbeat_at"),
         # Every list query in the dashboard is tenant-scoped, so the plain
         # created_at index alone would force a scan across all tenants.
-        Index("idx_runs_owner", "fnd_flow_runs", "tenant_id, user_id, created_at DESC"),
+        Index("idx_runs_owner", "flow_runs", "tenant_id, user_id, created_at DESC"),
     ),
 )
 
@@ -108,7 +108,7 @@ FLOW_RUNS = Table(
 # Dropping it also removes the one place this schema would have needed a
 # SERIAL/AUTOINCREMENT type mapping, which the two backends spell differently.
 FLOW_RUN_STATES = Table(
-    name="fnd_flow_run_states",
+    name="flow_run_states",
     columns=(
         Column("run_id", "TEXT", "NOT NULL"),
         Column("seq", "INTEGER", "NOT NULL"),
@@ -120,11 +120,11 @@ FLOW_RUN_STATES = Table(
         Column("at", "REAL", "NOT NULL"),
     ),
     table_constraints=("PRIMARY KEY (run_id, seq)",),
-    indexes=(Index("idx_states_run", "fnd_flow_run_states", "run_id, seq"),),
+    indexes=(Index("idx_states_run", "flow_run_states", "run_id, seq"),),
 )
 
 FLOW_RUN_EDGES = Table(
-    name="fnd_flow_run_edges",
+    name="flow_run_edges",
     columns=(
         Column("downstream", "TEXT", "NOT NULL"),
         Column("upstream", "TEXT", "NOT NULL"),
@@ -141,7 +141,7 @@ RUN_TABLES = (FLOW_RUNS, FLOW_RUN_STATES, FLOW_RUN_EDGES)
 # --------------------------------------------------------------------------
 
 FLOW_EVENTS = Table(
-    name="fnd_flow_events",
+    name="flow_events",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("occurred", "REAL", "NOT NULL"),
@@ -159,10 +159,10 @@ FLOW_EVENTS = Table(
         Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
     ),
     indexes=(
-        Index("idx_events_owner", "fnd_flow_events", "tenant_id, occurred DESC"),
-        Index("idx_events_occurred", "fnd_flow_events", "occurred DESC"),
-        Index("idx_events_type", "fnd_flow_events", "event"),
-        Index("idx_events_resource", "fnd_flow_events", "resource_id"),
+        Index("idx_events_owner", "flow_events", "tenant_id, occurred DESC"),
+        Index("idx_events_occurred", "flow_events", "occurred DESC"),
+        Index("idx_events_type", "flow_events", "event"),
+        Index("idx_events_resource", "flow_events", "resource_id"),
     ),
 )
 
@@ -174,7 +174,7 @@ EVENT_TABLES = (FLOW_EVENTS,)
 # --------------------------------------------------------------------------
 
 FLOW_DEPLOYMENTS = Table(
-    name="fnd_flow_deployments",
+    name="flow_deployments",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("name", "TEXT", "NOT NULL UNIQUE"),
@@ -197,8 +197,8 @@ FLOW_DEPLOYMENTS = Table(
         Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
     ),
     indexes=(
-        Index("idx_deployments_flow", "fnd_flow_deployments", "flow_name"),
-        Index("idx_deployments_owner", "fnd_flow_deployments", "tenant_id, name"),
+        Index("idx_deployments_flow", "flow_deployments", "flow_name"),
+        Index("idx_deployments_owner", "flow_deployments", "tenant_id, name"),
     ),
 )
 
@@ -208,7 +208,7 @@ DEPLOYMENT_TABLES = (FLOW_DEPLOYMENTS,)
 # Published graph versions are immutable. The draft is the only editable
 # document; running flows reference a specific published version.
 FLOW_DEFINITIONS = Table(
-    name="fnd_flow_definitions",
+    name="flow_definitions",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("tenant_id", "TEXT", "NOT NULL"),
@@ -219,11 +219,11 @@ FLOW_DEFINITIONS = Table(
         Column("updated_at", "REAL", "NOT NULL"),
     ),
     table_constraints=("UNIQUE (tenant_id, name)", "UNIQUE (tenant_id, id)"),
-    indexes=(Index("idx_flow_definitions_tenant", "fnd_flow_definitions", "tenant_id, name"),),
+    indexes=(Index("idx_flow_definitions_tenant", "flow_definitions", "tenant_id, name"),),
 )
 
 FLOW_DEFINITION_VERSIONS = Table(
-    name="fnd_flow_definition_versions",
+    name="flow_definition_versions",
     columns=(
         Column("tenant_id", "TEXT", "NOT NULL"),
         Column("definition_id", "TEXT", "NOT NULL"),
@@ -233,7 +233,7 @@ FLOW_DEFINITION_VERSIONS = Table(
     ),
     table_constraints=(
         "PRIMARY KEY (tenant_id, definition_id, version)",
-        "FOREIGN KEY (tenant_id, definition_id) REFERENCES fnd_flow_definitions(tenant_id, id)",
+        "FOREIGN KEY (tenant_id, definition_id) REFERENCES flow_definitions(tenant_id, id)",
     ),
 )
 
@@ -255,7 +255,7 @@ GRAPH_TABLES = (FLOW_DEFINITIONS, FLOW_DEFINITION_VERSIONS)
 #: tenant, so one deployment can serve several organizations and an org can
 #: outlive a change of identity provider.
 AUTH_ORGS = Table(
-    name="fnd_auth_orgs",
+    name="auth_orgs",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("name", "TEXT", "NOT NULL UNIQUE"),
@@ -268,7 +268,7 @@ AUTH_ORGS = Table(
 #: ours and never changes, so rows stay attributed across an email change or
 #: a move to a different provider.
 AUTH_USERS = Table(
-    name="fnd_auth_users",
+    name="auth_users",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("issuer", "TEXT", "NOT NULL"),
@@ -285,14 +285,14 @@ AUTH_USERS = Table(
         Column("kind", "TEXT", "NOT NULL DEFAULT 'human'"),
     ),
     table_constraints=("UNIQUE (issuer, subject)",),
-    indexes=(Index("idx_users_email", "fnd_auth_users", "email"),),
+    indexes=(Index("idx_users_email", "auth_users", "email"),),
 )
 
 #: Which orgs a person belongs to, and what they may do in each. Roles are
 #: per-membership, not per-user: being an operator at one customer must not
 #: make you one everywhere.
 AUTH_MEMBERSHIPS = Table(
-    name="fnd_auth_memberships",
+    name="auth_memberships",
     columns=(
         Column("user_id", "TEXT", "NOT NULL"),
         Column("org_id", "TEXT", "NOT NULL"),
@@ -304,14 +304,14 @@ AUTH_MEMBERSHIPS = Table(
         Column("active_role", "TEXT"),
     ),
     table_constraints=("PRIMARY KEY (user_id, org_id)",),
-    indexes=(Index("idx_memberships_org", "fnd_auth_memberships", "org_id"),),
+    indexes=(Index("idx_memberships_org", "auth_memberships", "org_id"),),
 )
 
 # Optional reporting dimensions, scoped to a user's organization membership.
 # Kept separate from auth_memberships so profile enrichment does not alter the
 # identity/authorization model or older migration shapes.
 AUTH_MEMBERSHIP_ATTRIBUTES = Table(
-    name="fnd_auth_membership_attributes",
+    name="auth_membership_attributes",
     columns=(
         Column("tenant_id", "TEXT", "NOT NULL"),
         Column("user_id", "TEXT", "NOT NULL"),
@@ -320,9 +320,9 @@ AUTH_MEMBERSHIP_ATTRIBUTES = Table(
         Column("updated_at", "REAL", "NOT NULL"),
     ),
     table_constraints=("PRIMARY KEY (tenant_id, user_id)",),
-    indexes=(Index("idx_membership_attributes_department", "fnd_auth_membership_attributes",
+    indexes=(Index("idx_membership_attributes_department", "auth_membership_attributes",
                    "tenant_id, department"),
-             Index("idx_membership_attributes_business_unit", "fnd_auth_membership_attributes",
+             Index("idx_membership_attributes_business_unit", "auth_membership_attributes",
                    "tenant_id, business_unit")),
 )
 
@@ -330,7 +330,7 @@ AUTH_MEMBERSHIP_ATTRIBUTES = Table(
 #: stored — a leaked database must not yield working keys — with a short
 #: non-secret prefix kept so a key can be looked up without scanning.
 AUTH_API_KEYS = Table(
-    name="fnd_auth_api_keys",
+    name="auth_api_keys",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("prefix", "TEXT", "NOT NULL"),
@@ -352,16 +352,16 @@ AUTH_API_KEYS = Table(
         Column("client_id", "TEXT"),
     ),
     indexes=(
-        Index("idx_api_keys_prefix", "fnd_auth_api_keys", "prefix"),
-        Index("idx_api_keys_client", "fnd_auth_api_keys", "client_id"),
-        Index("idx_api_keys_user", "fnd_auth_api_keys", "user_id"),
+        Index("idx_api_keys_prefix", "auth_api_keys", "prefix"),
+        Index("idx_api_keys_client", "auth_api_keys", "client_id"),
+        Index("idx_api_keys_user", "auth_api_keys", "user_id"),
     ),
 )
 
 # Local dashboard passwords are isolated from external IdP identities. The
 # plaintext password is never stored; `password_hash` uses PBKDF2-HMAC-SHA256.
 AUTH_LOCAL_CREDENTIALS = Table(
-    name="fnd_auth_local_credentials",
+    name="auth_local_credentials",
     columns=(
         Column("username", "TEXT", "PRIMARY KEY"),
         Column("user_id", "TEXT", "NOT NULL UNIQUE"),
@@ -369,11 +369,11 @@ AUTH_LOCAL_CREDENTIALS = Table(
         Column("must_change", "BOOL", "NOT NULL DEFAULT 0"),
         Column("updated_at", "REAL", "NOT NULL"),
     ),
-    indexes=(Index("idx_local_credentials_user", "fnd_auth_local_credentials", "user_id", unique=True),),
+    indexes=(Index("idx_local_credentials_user", "auth_local_credentials", "user_id", unique=True),),
 )
 
 AUTH_GROUPS = Table(
-    name="fnd_auth_groups",
+    name="auth_groups",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("tenant_id", "TEXT", "NOT NULL"),
@@ -382,11 +382,11 @@ AUTH_GROUPS = Table(
         Column("created_at", "REAL", "NOT NULL"),
     ),
     table_constraints=("UNIQUE (tenant_id, id)", "UNIQUE (tenant_id, name)"),
-    indexes=(Index("idx_auth_groups_tenant", "fnd_auth_groups", "tenant_id, name"),),
+    indexes=(Index("idx_auth_groups_tenant", "auth_groups", "tenant_id, name"),),
 )
 
 AUTH_GROUP_MEMBERSHIPS = Table(
-    name="fnd_auth_group_memberships",
+    name="auth_group_memberships",
     columns=(
         Column("tenant_id", "TEXT", "NOT NULL"),
         Column("group_id", "TEXT", "NOT NULL"),
@@ -394,7 +394,7 @@ AUTH_GROUP_MEMBERSHIPS = Table(
         Column("created_at", "REAL", "NOT NULL"),
     ),
     table_constraints=("PRIMARY KEY (tenant_id, group_id, user_id)",),
-    indexes=(Index("idx_auth_group_memberships_user", "fnd_auth_group_memberships", "tenant_id, user_id"),),
+    indexes=(Index("idx_auth_group_memberships_user", "auth_group_memberships", "tenant_id, user_id"),),
 )
 
 AUTH_TABLES = (AUTH_ORGS, AUTH_USERS, AUTH_MEMBERSHIPS, AUTH_API_KEYS)
@@ -416,7 +416,7 @@ AUTH_TABLES = (AUTH_ORGS, AUTH_USERS, AUTH_MEMBERSHIPS, AUTH_API_KEYS)
 #: target checkable at write time, so a typo'd route is caught by the admin
 #: saving it rather than by a user hitting a 404.
 NAV_PAGES = Table(
-    name="fnd_nav_pages",
+    name="nav_pages",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("key", "TEXT", "NOT NULL UNIQUE"),    # "flow.instances"
@@ -433,7 +433,7 @@ NAV_PAGES = Table(
 #: exactly the REST gateway's four resource types; `page` is nav-only and
 #: never authorizes an invoke.
 NAV_FUNCTIONS = Table(
-    name="fnd_nav_functions",
+    name="nav_functions",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("key", "TEXT", "NOT NULL"),            # stable public handle
@@ -450,11 +450,11 @@ NAV_FUNCTIONS = Table(
         Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
     ),
     table_constraints=("UNIQUE (tenant_id, key)",),
-    indexes=(Index("idx_functions_tenant", "fnd_nav_functions", "tenant_id"),),
+    indexes=(Index("idx_functions_tenant", "nav_functions", "tenant_id"),),
 )
 
 NAV_MENUS = Table(
-    name="fnd_nav_menus",
+    name="nav_menus",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("name", "TEXT", "NOT NULL"),
@@ -466,7 +466,7 @@ NAV_MENUS = Table(
         Column("updated_at", "REAL", "NOT NULL"),
         Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
     ),
-    indexes=(Index("idx_nav_menus_tenant", "fnd_nav_menus", "tenant_id"),),
+    indexes=(Index("idx_nav_menus_tenant", "nav_menus", "tenant_id"),),
 )
 
 #: A leaf (references a Function) or a branch (references another Menu, whole).
@@ -474,7 +474,7 @@ NAV_MENUS = Table(
 #: rather than as a CHECK constraint, to keep one SQL dialect serving both
 #: backends (§15.3a).
 NAV_MENU_ITEMS = Table(
-    name="fnd_nav_menu_items",
+    name="nav_menu_items",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("menu_id", "TEXT", "NOT NULL"),         # the owning Menu
@@ -490,9 +490,9 @@ NAV_MENU_ITEMS = Table(
         Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
     ),
     indexes=(
-        Index("idx_menu_items_menu", "fnd_nav_menu_items", "menu_id"),
-        Index("idx_menu_items_function", "fnd_nav_menu_items", "function_id"),
-        Index("idx_menu_items_ref", "fnd_nav_menu_items", "ref_menu_id"),
+        Index("idx_menu_items_menu", "nav_menu_items", "menu_id"),
+        Index("idx_menu_items_function", "nav_menu_items", "function_id"),
+        Index("idx_menu_items_ref", "nav_menu_items", "ref_menu_id"),
     ),
 )
 
@@ -500,7 +500,7 @@ NAV_MENU_ITEMS = Table(
 #: a Principal already carries in `auth_memberships.roles`, which is what turns
 #: that free-form string into a resolvable tree.
 AUTH_ROLES = Table(
-    name="fnd_auth_roles",
+    name="auth_roles",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("name", "TEXT", "NOT NULL"),
@@ -514,7 +514,7 @@ AUTH_ROLES = Table(
         Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
     ),
     table_constraints=("UNIQUE (tenant_id, name)",),
-    indexes=(Index("idx_roles_tenant", "fnd_auth_roles", "tenant_id"),),
+    indexes=(Index("idx_roles_tenant", "auth_roles", "tenant_id"),),
 )
 
 #: Bumped on every write to any nav_* / auth_roles row in a tenant, in the same
@@ -522,7 +522,7 @@ AUTH_ROLES = Table(
 #: re-walking a menu tree, so a revoked role takes effect on the next request
 #: across every process rather than after a TTL.
 NAV_VERSIONS = Table(
-    name="fnd_nav_versions",
+    name="nav_versions",
     columns=(
         Column("tenant_id", "TEXT", "PRIMARY KEY"),
         Column("version", "INTEGER", "NOT NULL DEFAULT 1"),
@@ -539,11 +539,14 @@ NAV_TABLES = (NAV_PAGES, NAV_FUNCTIONS, NAV_MENUS, NAV_MENU_ITEMS,
 # sessions — conversations, their messages, and per-call token usage (§19.7)
 # --------------------------------------------------------------------------
 #
-# Conversation data lives beside flow, navigation, and auth so it follows the
-# same database versioning and tenant scoping rules.
+# These live beside flow, nav and auth rather than in `gyrfalcon_state.py`
+# because a server install needs them tenant-scoped, and `sessions` was the one
+# substantial data set outside `Scope`. CLIENT mode still resolves to SQLite
+# (`db/__init__.py`), so a single-user box gains tenancy columns it never has
+# to think about.
 
 SESSIONS = Table(
-    name="ai_sessions",
+    name="sessions",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("source", "TEXT"),
@@ -581,15 +584,15 @@ SESSIONS = Table(
         Column("lease_epoch", "INTEGER", "NOT NULL DEFAULT 0"),
     ),
     indexes=(
-        Index("idx_sessions_owner", "ai_sessions", "tenant_id, last_active DESC"),
-        Index("idx_sessions_user", "ai_sessions", "user_id, last_active DESC"),
-        Index("idx_sessions_parent", "ai_sessions", "parent_session_id"),
-        Index("uq_sessions_scope_id", "ai_sessions", "tenant_id, environment_id, id", unique=True),
+        Index("idx_sessions_owner", "sessions", "tenant_id, last_active DESC"),
+        Index("idx_sessions_user", "sessions", "user_id, last_active DESC"),
+        Index("idx_sessions_parent", "sessions", "parent_session_id"),
+        Index("uq_sessions_scope_id", "sessions", "tenant_id, environment_id, id", unique=True),
     ),
 )
 
 SESSION_MESSAGES = Table(
-    name="ai_session_messages",
+    name="session_messages",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("session_id", "TEXT", "NOT NULL"),
@@ -608,17 +611,17 @@ SESSION_MESSAGES = Table(
         Column("input_ordinal", "INTEGER"),
     ),
     indexes=(
-        Index("idx_session_messages_session", "ai_session_messages",
+        Index("idx_session_messages_session", "session_messages",
               "session_id, seq"),
-        Index("idx_session_messages_owner", "ai_session_messages",
+        Index("idx_session_messages_owner", "session_messages",
               "tenant_id, created_at DESC"),
-        Index("uq_session_messages_order", "ai_session_messages",
+        Index("uq_session_messages_order", "session_messages",
               "tenant_id, environment_id, session_id, seq", unique=True),
     ),
 )
 
 SESSION_USAGE = Table(
-    name="ai_session_usage",
+    name="session_usage",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("session_id", "TEXT", "NOT NULL"),
@@ -643,17 +646,17 @@ SESSION_USAGE = Table(
         Column("run_id", "TEXT"),
     ),
     indexes=(
-        Index("idx_session_usage_session", "ai_session_usage", "session_id, seq"),
-        Index("idx_session_usage_owner", "ai_session_usage",
+        Index("idx_session_usage_session", "session_usage", "session_id, seq"),
+        Index("idx_session_usage_owner", "session_usage",
               "tenant_id, created_at DESC"),
-        Index("idx_session_usage_model", "ai_session_usage", "model"),
-        Index("uq_session_usage_order", "ai_session_usage",
+        Index("idx_session_usage_model", "session_usage", "model"),
+        Index("uq_session_usage_order", "session_usage",
               "tenant_id, environment_id, session_id, seq", unique=True),
     ),
 )
 
 SESSION_ROUTES = Table(
-    name="ai_session_routes",
+    name="session_routes",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("tenant_id", "TEXT", "NOT NULL"),
@@ -670,16 +673,16 @@ SESSION_ROUTES = Table(
         "UNIQUE (tenant_id, environment_id, platform, connection_id, "
         "chat_id, thread_id, agent_id)",
         "FOREIGN KEY (tenant_id, environment_id, session_id) "
-        "REFERENCES ai_sessions(tenant_id, environment_id, id)",
+        "REFERENCES sessions(tenant_id, environment_id, id)",
     ),
     indexes=(
-        Index("idx_session_routes_session", "ai_session_routes",
+        Index("idx_session_routes_session", "session_routes",
               "tenant_id, environment_id, session_id"),
     ),
 )
 
 SESSION_CONTEXTS = Table(
-    name="ai_session_contexts",
+    name="session_contexts",
     columns=(
         Column("tenant_id", "TEXT", "NOT NULL"),
         Column("environment_id", "TEXT", "NOT NULL"),
@@ -696,13 +699,13 @@ SESSION_CONTEXTS = Table(
     table_constraints=(
         "PRIMARY KEY (tenant_id, environment_id, session_id, context_revision)",
         "FOREIGN KEY (tenant_id, environment_id, session_id) "
-        "REFERENCES ai_sessions(tenant_id, environment_id, id)",
+        "REFERENCES sessions(tenant_id, environment_id, id)",
         "CHECK (first_seq >= 0 AND last_seq >= first_seq)",
     ),
 )
 
 SESSION_PROMPT_SNAPSHOTS = Table(
-    name="ai_session_prompt_snapshots",
+    name="session_prompt_snapshots",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("tenant_id", "TEXT", "NOT NULL"),
@@ -716,16 +719,16 @@ SESSION_PROMPT_SNAPSHOTS = Table(
     ),
     table_constraints=(
         "FOREIGN KEY (tenant_id, environment_id, session_id) "
-        "REFERENCES ai_sessions(tenant_id, environment_id, id)",
+        "REFERENCES sessions(tenant_id, environment_id, id)",
     ),
     indexes=(
-        Index("idx_prompt_snapshots_session", "ai_session_prompt_snapshots",
+        Index("idx_prompt_snapshots_session", "session_prompt_snapshots",
               "tenant_id, environment_id, session_id, created_at"),
     ),
 )
 
 SESSION_PARTICIPANTS = Table(
-    name="ai_session_participants",
+    name="session_participants",
     columns=(
         Column("tenant_id", "TEXT", "NOT NULL"),
         Column("environment_id", "TEXT", "NOT NULL"),
@@ -737,12 +740,12 @@ SESSION_PARTICIPANTS = Table(
     table_constraints=(
         "PRIMARY KEY (tenant_id, environment_id, session_id, user_id)",
         "FOREIGN KEY (tenant_id, environment_id, session_id) "
-        "REFERENCES ai_sessions(tenant_id, environment_id, id)",
+        "REFERENCES sessions(tenant_id, environment_id, id)",
     ),
 )
 
 CONVERSATION_GROUPS = Table(
-    name="ai_conversation_groups",
+    name="conversation_groups",
     columns=(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("tenant_id", "TEXT", "NOT NULL"),
@@ -756,71 +759,20 @@ CONVERSATION_GROUPS = Table(
         "UNIQUE (tenant_id, environment_id, id)",
         "UNIQUE (tenant_id, environment_id, platform, external_id)",
     ),
-    indexes=(Index("idx_conversation_groups_name", "ai_conversation_groups",
+    indexes=(Index("idx_conversation_groups_name", "conversation_groups",
                    "tenant_id, environment_id, name"),),
-)
-
-AI_STATE_META = Table(
-    name="ai_state_meta",
-    columns=(
-        Column("key", "TEXT", "PRIMARY KEY"),
-        Column("value", "TEXT"),
-    ),
 )
 
 SESSION_TABLES = (
     SESSIONS, SESSION_MESSAGES, SESSION_USAGE, SESSION_ROUTES,
     SESSION_CONTEXTS, SESSION_PROMPT_SNAPSHOTS, SESSION_PARTICIPANTS,
-    CONVERSATION_GROUPS, AI_STATE_META,
-)
-
-
-MAIL_TABLES = (
-    Table("fnd_emails", (
-        Column("id", "TEXT", "PRIMARY KEY"), Column("account", "TEXT", "NOT NULL"),
-        Column("folder", "TEXT", "NOT NULL"), Column("uid", "INTEGER"),
-        Column("thread_id", "TEXT", "NOT NULL"), Column("in_reply_to", "TEXT"),
-        Column("references_ids", "TEXT"), Column("from_addr", "TEXT"),
-        Column("to_addr", "TEXT"), Column("subject", "TEXT"),
-        Column("date_header", "TEXT"), Column("body_text", "TEXT"),
-        Column("raw_headers", "TEXT"), Column("direction", "TEXT", "NOT NULL DEFAULT 'inbound'"),
-        Column("created_at", "REAL", "NOT NULL"),
-    )),
-    Table("fnd_email_classifications", (
-        Column("email_id", "TEXT", "NOT NULL"), Column("label", "TEXT", "NOT NULL"),
-        Column("confidence", "REAL"), Column("source", "TEXT", "NOT NULL DEFAULT 'rule'"),
-        Column("created_at", "REAL", "NOT NULL"),
-    ), table_constraints=("PRIMARY KEY (email_id, label)",
-                          "FOREIGN KEY (email_id) REFERENCES fnd_emails(id)")),
-    Table("fnd_classification_flow_map", (
-        Column("label", "TEXT", "PRIMARY KEY"), Column("flow_name", "TEXT", "NOT NULL"),
-        Column("enabled", "BOOL", "NOT NULL DEFAULT 1"),
-        Column("parameters", "TEXT", "NOT NULL DEFAULT '{}'"),
-        Column("created_at", "REAL", "NOT NULL"), Column("updated_at", "REAL", "NOT NULL"),
-    )),
-    Table("fnd_email_dispatches", (
-        Column("id", "TEXT", "PRIMARY KEY"), Column("email_id", "TEXT", "NOT NULL"),
-        Column("label", "TEXT", "NOT NULL"), Column("flow_name", "TEXT", "NOT NULL"),
-        Column("run_id", "TEXT"), Column("status", "TEXT", "NOT NULL"),
-        Column("detail", "TEXT"), Column("created_at", "REAL", "NOT NULL"),
-    )),
-)
-
-MIGRATION_TABLES = (
-    Table("fnd_migration_conflicts", (
-        Column("source", "TEXT", "NOT NULL"),
-        Column("source_table", "TEXT", "NOT NULL"),
-        Column("source_key", "TEXT", "NOT NULL"),
-        Column("payload", "TEXT", "NOT NULL"),
-        Column("reason", "TEXT", "NOT NULL"),
-        Column("migrated_at", "REAL", "NOT NULL"),
-    ), table_constraints=("PRIMARY KEY (source, source_table, source_key)",)),
+    CONVERSATION_GROUPS,
 )
 
 
 ALL_TABLES = (RUN_TABLES + EVENT_TABLES + DEPLOYMENT_TABLES + GRAPH_TABLES + AUTH_TABLES
               + (AUTH_LOCAL_CREDENTIALS, AUTH_GROUPS, AUTH_GROUP_MEMBERSHIPS) + NAV_TABLES
-              + (AUTH_MEMBERSHIP_ATTRIBUTES,) + SESSION_TABLES + MAIL_TABLES + MIGRATION_TABLES)
+              + (AUTH_MEMBERSHIP_ATTRIBUTES,) + SESSION_TABLES)
 
 
 def render(tables: Sequence[Table], dialect: "Dialect") -> list[str]:

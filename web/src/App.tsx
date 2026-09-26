@@ -8,8 +8,10 @@ import {
   BookOpen, Puzzle, Clock, Users, Settings, ScrollText,
   ChevronDown, ChevronRight, Zap, Wrench, Home,
   PanelLeftClose, PanelLeftOpen, AppWindow, Sun, Moon,
+  LogOut,
   Workflow, Play, FileCode, Inbox, CalendarClock, Radio,
   ShieldCheck, KeyRound, Lock,
+  UsersRound,
 } from "lucide-react";
 
 import { ChatPage }      from "./pages/ChatPage";
@@ -17,6 +19,7 @@ import { SessionsPage }  from "./pages/SessionsPage";
 import { ConfigPage }    from "./pages/ConfigPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { TokenomicsPage } from "./pages/TokenomicsPage";
+import { TokenomicsReportPage } from "./pages/TokenomicsReportPage";
 import { SchedulerPage }      from "./pages/SchedulerPage";
 import { SkillsPage }    from "./pages/SkillsPage";
 import { APP_NAME, APP_SUBTITLE, ORG_NAME } from "./lib/constants";
@@ -30,12 +33,17 @@ import { ApplicationsManagePage } from "./pages/ApplicationsManagePage";
 import { ApplicationDetailPage }  from "./pages/ApplicationDetailPage";
 import { FlowInstancesPage }   from "./pages/FlowInstancesPage";
 import { FlowDefinitionsPage } from "./pages/FlowDefinitionsPage";
+import { FlowDesignerPage } from "./pages/FlowDesignerPage";
 import { FlowTasksPage }       from "./pages/FlowTasksPage";
 import { FlowDeploymentsPage } from "./pages/FlowDeploymentsPage";
 import { FlowEventsPage }      from "./pages/FlowEventsPage";
 import { ServiceAccountsPage } from "./pages/ServiceAccountsPage";
 import { SecretStorePage }     from "./pages/SecretStorePage";
+import { RoutingPage } from "./pages/RoutingPage";
+import { GuardrailPage } from "./pages/GuardrailPage";
 import { api } from "./lib/api";
+import { ChangePasswordPage, LoginPage } from "./pages/LoginPage";
+import { AccessControlPage } from "./pages/AccessControlPage";
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 
@@ -50,7 +58,13 @@ const NAV: NavDef[] = [
   { type: "item", path: "/chat",      label: "Chat",      icon: MessageSquare },
   { type: "item", path: "/sessions",  label: "Sessions",  icon: History },
   { type: "item", path: "/analytics", label: "Analytics", icon: BarChart2 },
-  { type: "item", path: "/tokenomics", label: "Tokenomics", icon: Calculator },
+  {
+    type: "group", label: "Tokenomics", icon: Calculator,
+    items: [
+      { type: "item", path: "/tokenomics/report", label: "Report", icon: BarChart2 },
+      { type: "item", path: "/tokenomics/estimate", label: "Estimation", icon: Calculator },
+    ],
+  },
   {
     // Single top-level entry named "Flow" (15-flow.md §14); everything else
     // nests beneath it. Placed above "AI Engine": flows are a business
@@ -60,6 +74,7 @@ const NAV: NavDef[] = [
       { type: "item", path: "/flows/instances",   label: "Instances",   icon: Play },
       { type: "item", path: "/flows/tasks",       label: "My Tasks",    icon: Inbox },
       { type: "item", path: "/flows/definitions", label: "Definitions", icon: FileCode },
+      { type: "item", path: "/flows/designer",    label: "Designer",    icon: Workflow },
       { type: "item", path: "/flows/deployments", label: "Deployments", icon: CalendarClock },
       { type: "item", path: "/flows/events",      label: "Events",      icon: Radio },
     ],
@@ -72,6 +87,8 @@ const NAV: NavDef[] = [
       { type: "item", path: "/agents",  label: "Agents",      icon: Users },
       { type: "item", path: "/skills",  label: "Skills",      icon: BookOpen },
       { type: "item", path: "/plugins", label: "Plugins",     icon: Puzzle },
+      { type: "item", path: "/routing", label: "Routing", icon: Workflow },
+      { type: "item", path: "/guardrail", label: "Guardrail", icon: ShieldCheck },
     ],
   },
   {
@@ -86,6 +103,8 @@ const NAV: NavDef[] = [
         items: [
           { type: "item", path: "/security/service-accounts", label: "Service Accounts", icon: KeyRound },
           { type: "item", path: "/security/secrets",          label: "Secret Store",      icon: Lock },
+          { type: "item", path: "/security/users",            label: "Users & Groups",    icon: UsersRound },
+          { type: "item", path: "/security/roles",            label: "Roles",             icon: ShieldCheck },
         ],
       },
     ],
@@ -94,14 +113,16 @@ const NAV: NavDef[] = [
 
 const PATH_LABELS: Record<string, string> = {
   chat: "Chat", sessions: "Sessions", analytics: "Analytics",
-  tokenomics: "Tokenomics",
+  tokenomics: "Tokenomics", report: "Report", estimate: "Estimation",
   models: "Models",   mcp: "MCP Servers", agents: "Agents", skills: "Skills",
   plugins: "Plugins", scheduler: "Scheduler", profiles: "Profiles",
+  routing: "Routing", guardrail: "Guardrail",
   config: "Configurations", logs: "Logs",
   applications: "Applications", manage: "Manage",
   flows: "Flow", instances: "Instances", tasks: "My Tasks", definitions: "Definitions",
   deployments: "Deployments", events: "Events",
   security: "Security", "service-accounts": "Service Accounts", secrets: "Secret Store",
+  users: "Users & Groups", roles: "Roles",
 };
 
 const SIDEBAR_W  = 240;
@@ -466,8 +487,39 @@ function ScrollPage({ children }: { children: React.ReactNode }) {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
+interface AuthStatus { login_required: boolean; authenticated: boolean; must_change_password: boolean; oidc_configured: boolean; username?: string | null }
+
+async function loadAuthStatus(): Promise<AuthStatus> {
+  const base = window.__GYRFALCON_BASE_PATH__ || "";
+  const response = await fetch(`${base}/auth/status`, { credentials: "same-origin", cache: "no-store" });
+  if (!response.ok) throw new Error("Could not check sign-in status");
+  return response.json();
+}
+
 export function App() {
+  const [auth, setAuth] = useState<AuthStatus | null>(null);
+  const [authError, setAuthError] = useState(false);
+  const refreshAuth = () => loadAuthStatus().then(value => { setAuth(value); setAuthError(false); }).catch(() => setAuthError(true));
+  useEffect(() => { void refreshAuth(); }, []);
+
+  if (authError) return <div style={{ padding: 32, color: "var(--fg)" }}>Could not connect to the Gyrfalcon server. Reload to try again.</div>;
+  if (!auth) return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", color: "var(--fg-muted)" }}>Loading sign-in…</div>;
+  if (auth.login_required && !auth.authenticated) return <LoginPage onSignedIn={() => void refreshAuth()} oidcConfigured={auth.oidc_configured} />;
+  if (auth.must_change_password) return <ChangePasswordPage onChanged={() => void refreshAuth()} />;
+  return <DashboardApp username={auth.username || "User"} onLogout={async () => {
+    const base = window.__GYRFALCON_BASE_PATH__ || "";
+    await fetch(`${base}/auth/logout`, { method: "POST", credentials: "same-origin" });
+    await refreshAuth();
+  }} />;
+}
+
+function DashboardApp({ username, onLogout }: { username: string; onLogout: () => void }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [roles, setRoles] = useState<string[] | null>(null);
+  useEffect(() => {
+    api.getCurrentUser().then((user) => setRoles(user.roles)).catch(() => setRoles([]));
+  }, []);
+  const canDesignFlows = roles?.some((role) => ["admin", "system_admin", "app_developer", "operator"].includes(role)) ?? false;
 
   // Badge "My Tasks" with the pending-approval count — per §14.2, this plus the
   // page itself is the entire discoverability story for human-in-the-loop.
@@ -488,7 +540,7 @@ export function App() {
     if (def.type !== "group" || def.label !== "Flow") return def;
     return {
       ...def,
-      items: def.items.map((item) =>
+      items: def.items.filter((item) => canDesignFlows || item.type !== "item" || item.path !== "/flows/designer").map((item) =>
         item.type === "item" && item.path === "/flows/tasks"
           ? { ...item, badge: pendingTaskCount || undefined }
           : item
@@ -548,13 +600,13 @@ export function App() {
 
         {/* Navigation */}
         <div style={S.navScroll}>
-          {navWithBadges.slice(0, 3).map((def) =>
+          {navWithBadges.slice(0, 4).map((def) =>
             def.type === "item"
               ? <NavItemLink key={def.path} item={def} collapsed={collapsed} />
               : <NavGroupSection key={def.label} group={def} collapsed={collapsed} />
           )}
           <NavApplicationsSection collapsed={collapsed} />
-          {navWithBadges.slice(3).map((def) =>
+          {navWithBadges.slice(4).map((def) =>
             def.type === "item"
               ? <NavItemLink key={def.path} item={def} collapsed={collapsed} />
               : <NavGroupSection key={def.label} group={def} collapsed={collapsed} />
@@ -576,15 +628,20 @@ export function App() {
 
         {/* User + theme toggle */}
         <div style={S.userCard(collapsed)}>
-          <div style={S.avatar} title={collapsed ? `Zhang, Alex · ${ORG_NAME}` : undefined}>
-            ZA
+          <div style={S.avatar} title={collapsed ? `${username} · ${ORG_NAME}` : undefined}>
+            {username.slice(0, 2).toUpperCase()}
           </div>
           {!collapsed && (
             <>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={S.userName}>Zhang, Alex</div>
+                <div style={S.userName}>{username}</div>
                 <div style={S.userOrg}>{ORG_NAME}</div>
               </div>
+              <button
+                onClick={onLogout}
+                title="Sign out"
+                style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "6px", padding: "5px 6px", cursor: "pointer", color: "var(--fg-muted)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+              ><LogOut size={14} /></button>
               <button
                 onClick={() => setIsDark(d => !d)}
                 title={isDark ? "Switch to light theme" : "Switch to dark theme"}
@@ -603,6 +660,11 @@ export function App() {
                 {isDark ? <Sun size={14} /> : <Moon size={14} />}
               </button>
             </>
+          )}
+          {collapsed && (
+            <button onClick={onLogout} title="Sign out" style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--fg-muted)", display: "flex", alignItems: "center", padding: "4px" }}>
+              <LogOut size={13} />
+            </button>
           )}
           {collapsed && (
             <button
@@ -631,16 +693,23 @@ export function App() {
             <Route path="/chat"      element={<ChatPage />} />
             <Route path="/sessions"  element={<ScrollPage><SessionsPage /></ScrollPage>} />
             <Route path="/analytics" element={<ScrollPage><AnalyticsPage /></ScrollPage>} />
-            <Route path="/tokenomics" element={<ScrollPage><TokenomicsPage /></ScrollPage>} />
+            <Route path="/tokenomics" element={<Navigate to="/tokenomics/estimate" replace />} />
+            <Route path="/tokenomics/report" element={<ScrollPage><TokenomicsReportPage /></ScrollPage>} />
+            <Route path="/tokenomics/estimate" element={<ScrollPage><TokenomicsPage /></ScrollPage>} />
             <Route path="/models"    element={<ScrollPage><ModelsPage /></ScrollPage>} />
             <Route path="/mcp"       element={<McpPage />} />
             <Route path="/agents"    element={<AgentsPage />} />
+            <Route path="/routing" element={<ScrollPage><RoutingPage /></ScrollPage>} />
+            <Route path="/guardrail" element={<ScrollPage><GuardrailPage /></ScrollPage>} />
             <Route path="/config"    element={<ScrollPage><ConfigPage /></ScrollPage>} />
             <Route path="/scheduler"      element={<SchedulerPage />} />
             <Route path="/flows"             element={<Navigate to="/flows/instances" replace />} />
             <Route path="/flows/instances"   element={<ScrollPage><FlowInstancesPage /></ScrollPage>} />
             <Route path="/flows/tasks"       element={<ScrollPage><FlowTasksPage /></ScrollPage>} />
             <Route path="/flows/definitions" element={<ScrollPage><FlowDefinitionsPage /></ScrollPage>} />
+            <Route path="/flows/designer"    element={<ScrollPage>{roles === null
+              ? <div style={{ padding: 16 }}>Checking access…</div>
+              : canDesignFlows ? <FlowDesignerPage /> : <div style={{ padding: 16 }}>Administrator or developer role required.</div>}</ScrollPage>} />
             <Route path="/flows/deployments" element={<ScrollPage><FlowDeploymentsPage /></ScrollPage>} />
             <Route path="/flows/events"      element={<ScrollPage><FlowEventsPage /></ScrollPage>} />
             <Route path="/skills"    element={<SkillsPage />} />
@@ -650,6 +719,8 @@ export function App() {
             <Route path="/security"                    element={<Navigate to="/security/service-accounts" replace />} />
             <Route path="/security/service-accounts"   element={<ScrollPage><ServiceAccountsPage /></ScrollPage>} />
             <Route path="/security/secrets"            element={<ScrollPage><SecretStorePage /></ScrollPage>} />
+            <Route path="/security/users"              element={<ScrollPage><AccessControlPage initialTab="users" /></ScrollPage>} />
+            <Route path="/security/roles"              element={<ScrollPage><AccessControlPage initialTab="roles" /></ScrollPage>} />
             <Route path="/applications/manage"  element={<ApplicationsManagePage />} />
             <Route path="/applications/:id"     element={<ApplicationDetailPage />} />
             <Route path="/applications"         element={<Navigate to="/applications/manage" replace />} />
@@ -659,4 +730,3 @@ export function App() {
     </div>
   );
 }
-

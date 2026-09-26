@@ -11,7 +11,7 @@ from _spec import requires, sym
 
 pytestmark = requires(
     "gyrfalcon.flow:flow",
-    "gyrfalcon.flow:task",
+    "gyrfalcon.flow:activity",
     section="§1.2, §3.1",
 )
 
@@ -74,10 +74,10 @@ class TestTemplateRunSplit:
 
 class TestHookRegistration:
     def test_hooks_accepted_as_decorator_kwargs(self):
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         calls = []
 
-        @task(on_rollback=[lambda t: calls.append("rollback")])
+        @activity(on_rollback=[lambda t: calls.append("rollback")])
         def t():
             return 1
 
@@ -85,9 +85,9 @@ class TestHookRegistration:
 
     def test_hooks_accepted_as_decorator_methods(self):
         """§13.2: fix the kwarg/method asymmetry — both forms must work."""
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def t():
             return 1
 
@@ -168,14 +168,14 @@ class TestRetryPolicy:
 
     def test_retry_condition_fn_can_veto(self, flaky):
         """§3.3: 'don't retry a 400, do retry a 429.'"""
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
         class NotRetryable(Exception):
             ...
 
         fn = flaky(fail_times=99, exc=NotRetryable("400"))
 
-        @task(retries=5, retry_condition_fn=lambda t, tr, st: not isinstance(st.exception, NotRetryable))
+        @activity(retries=5, retry_condition_fn=lambda t, tr, st: not isinstance(st.exception, NotRetryable))
         def t():
             return fn()
 

@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import secrets
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -54,6 +55,10 @@ if _telemetry_enabled:
 
 # Session token for authentication
 _session_token = secrets.token_urlsafe(32)
+_local_password_auth_ready = False
+_local_password_auth_lock = threading.Lock()
+_local_login_failures: dict[str, tuple[int, float]] = {}
+_local_login_failures_lock = threading.Lock()
 
 app = FastAPI(title=f"{get_app_name()} Dashboard API")
 
@@ -83,7 +88,8 @@ def _verify_token(request: Request):
     logger.debug("Beginning of _verify_token")
     from gyrfalcon import identity
 
-    if identity.identity_enabled():
+    local_password_auth = _ensure_local_password_auth()
+    if identity.identity_enabled() or local_password_auth:
         # Per-user credentials only: a shared secret cannot say who is calling.
         return _bind_request_principal(request)
 
@@ -166,9 +172,33 @@ def _resolve_principal(request: Request):
         if principal is not None:
             return principal
 
+    # Once local password auth is active, the single-user LOCAL fallback must
+    # not turn a missing or expired browser cookie into an authenticated user.
+    if _ensure_local_password_auth():
+        return None
+
     if not identity.identity_enabled():
         return identity.LOCAL
     return None
+
+
+def _ensure_local_password_auth() -> bool:
+    """Bootstrap the one-time local admin and cache whether password auth is active."""
+    global _local_password_auth_ready
+    if _local_password_auth_ready:
+        return True
+    with _local_password_auth_lock:
+        if _local_password_auth_ready:
+            return True
+        try:
+            from gyrfalcon.auth.store import get_auth_store
+            store = get_auth_store()
+            store.ensure_default_admin()
+            _local_password_auth_ready = store.has_local_credentials()
+        except Exception:
+            logger.exception("Could not initialize local dashboard credentials")
+            raise HTTPException(503, "Dashboard authentication is unavailable")
+    return _local_password_auth_ready
 
 
 # --- Status ---
@@ -322,6 +352,8 @@ async def get_telemetry_status(request: Request):
 @app.get("/api/debug/token")
 async def debug_token(request: Request):
     """Debug endpoint to check token - compare with window.__GYRFALCON_SESSION_TOKEN__ in browser."""
+    if _ensure_local_password_auth():
+        _verify_token(request)
     client_token = request.query_params.get("token", "")
     expected_preview = f"{_session_token[:8]}...{_session_token[-4:]}"
     client_preview = f"{client_token[:8]}...{client_token[-4:]}" if client_token and len(client_token) > 12 else client_token or "(empty)"
@@ -342,8 +374,7 @@ async def list_sessions(request: Request, limit: int = 50, offset: int = 0):
     db = SessionDB()
     try:
         sessions = db.list_sessions(limit=limit, offset=offset)
-        cursor = db.conn.execute("SELECT COUNT(*) FROM sessions")
-        total = cursor.fetchone()[0]
+        total = db.count_sessions()
         return {"sessions": sessions, "total": total, "limit": limit, "offset": offset}
     finally:
         db.close()
@@ -762,6 +793,57 @@ async def tokenomics_estimate(request: Request):
         cache_ttl=body.get("cache_ttl") or "5m",
     )
     return result.as_dict()
+
+
+@app.get("/api/tokenomics/report")
+async def tokenomics_report(
+    request: Request,
+    start: str,
+    end: str,
+    grain: str = "day",
+    dimension: str = "model",
+    pivot: str = "none",
+):
+    """Scoped usage report, grouped into UTC calendar periods and dimensions."""
+    principal = _verify_token(request)
+    from datetime import date, datetime, time as datetime_time, timedelta, timezone
+
+    if grain not in {"day", "week", "month", "quarter"}:
+        raise HTTPException(400, "grain must be day, week, month, or quarter")
+    dimensions = {
+        "none", "user", "group", "department", "business_unit", "model", "provider",
+    }
+    if dimension not in dimensions or pivot not in dimensions:
+        raise HTTPException(400, "unsupported report dimension")
+    try:
+        start_date = date.fromisoformat(start)
+        end_date = date.fromisoformat(end)
+    except ValueError as exc:
+        raise HTTPException(400, "start and end must be YYYY-MM-DD dates") from exc
+    if end_date < start_date:
+        raise HTTPException(400, "end must be on or after start")
+    if (end_date - start_date).days > 3660:
+        raise HTTPException(400, "report range cannot exceed 10 years")
+
+    start_at = datetime.combine(start_date, datetime_time.min, timezone.utc).timestamp()
+    end_at = datetime.combine(
+        end_date + timedelta(days=1), datetime_time.min, timezone.utc,
+    ).timestamp()
+    from gyrfalcon.db.scope import Scope
+    from gyrfalcon.sessions.store import get_session_store
+
+    rows = get_session_store().tokenomics_report(
+        start_at, end_at, grain=grain, dimension=dimension, pivot=pivot,
+        scope=Scope.of(principal),
+    )
+    totals = {
+        "calls": sum(int(row["calls"] or 0) for row in rows),
+        "input_tokens": sum(int(row["input_tokens"] or 0) for row in rows),
+        "output_tokens": sum(int(row["output_tokens"] or 0) for row in rows),
+        "reasoning_tokens": sum(int(row["reasoning_tokens"] or 0) for row in rows),
+        "cost_usd": sum(float(row["cost_usd"] or 0) for row in rows),
+    }
+    return {"rows": rows, "totals": totals, "timezone": "UTC"}
 
 
 @app.post("/api/pricing/refresh")
@@ -2477,6 +2559,165 @@ async def run_flow_definition_now(request: Request, name: str, body: FlowDefinit
     return {"run_id": run_id}
 
 
+# Database-authored graphs use the same run store as Python-authored flows.
+# A bearer API key can call the invoke route as a webhook; the dashboard uses
+# its authenticated session through the same path.
+def _graph_store():
+    from gyrfalcon.flow import sample_activities  # noqa: F401 - register built-ins
+    from gyrfalcon.flow.graphs import GraphStore
+    from gyrfalcon.flow.registry import discover_flows
+
+    discover_flows()
+    return GraphStore()
+
+
+class GraphCreate(BaseModel):
+    name: str
+    draft: dict
+
+
+class GraphDraft(BaseModel):
+    draft: dict
+
+
+class GraphInvoke(BaseModel):
+    inputs: dict = {}
+    version: int | None = None
+
+
+def _require_flow_designer(request: Request):
+    principal = _verify_token(request)
+    if not principal.has_role("admin", "system_admin", "app_developer", "operator"):
+        raise HTTPException(403, "Administrator or developer role required")
+    return principal
+
+
+@app.get("/api/flow/graphs/activities")
+async def list_graph_activities(request: Request):
+    _require_flow_designer(request)
+    from gyrfalcon.flow import sample_activities  # noqa: F401
+    from gyrfalcon.flow.registry import discover_flows, list_activities
+
+    discover_flows()
+    return {"activities": list_activities()}
+
+
+@app.get("/api/flow/graphs")
+async def list_flow_graphs(request: Request):
+    _require_flow_designer(request)
+    store = _graph_store()
+    try:
+        return {"graphs": [{**row, "published_version": store.latest_version(row["id"])}
+                           for row in store.list()]}
+    finally:
+        store.close()
+
+
+@app.post("/api/flow/graphs")
+async def create_flow_graph(request: Request, body: GraphCreate):
+    _require_flow_designer(request)
+    store = _graph_store()
+    try:
+        return {"id": store.create(body.name.strip(), body.draft)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        store.close()
+
+
+@app.post("/api/flow/graphs/sample")
+async def create_sample_flow_graph(request: Request):
+    _require_flow_designer(request)
+    from gyrfalcon.flow.sample_activities import sample_graph
+
+    store = _graph_store()
+    try:
+        existing = next((row for row in store.list() if row["name"] == "Hello sample"), None)
+        if existing:
+            return {"id": existing["id"]}
+        definition_id = store.create("Hello sample", sample_graph())
+        store.publish(definition_id)
+        return {"id": definition_id}
+    finally:
+        store.close()
+
+
+@app.get("/api/flow/graphs/{definition_id}")
+async def get_flow_graph(request: Request, definition_id: str):
+    _require_flow_designer(request)
+    store = _graph_store()
+    try:
+        row = store.get(definition_id)
+        if row is None:
+            raise HTTPException(404, "Graph not found")
+        return {**row, "published_version": store.latest_version(definition_id)}
+    finally:
+        store.close()
+
+
+@app.put("/api/flow/graphs/{definition_id}/draft")
+async def save_flow_graph_draft(request: Request, definition_id: str, body: GraphDraft):
+    _require_flow_designer(request)
+    store = _graph_store()
+    try:
+        store.save_draft(definition_id, body.draft)
+        return {"status": "saved"}
+    except KeyError as exc:
+        raise HTTPException(404, "Graph not found") from exc
+    finally:
+        store.close()
+
+
+@app.delete("/api/flow/graphs/{definition_id}")
+async def delete_flow_graph(request: Request, definition_id: str):
+    _require_flow_designer(request)
+    store = _graph_store()
+    try:
+        store.delete(definition_id)
+        return {"status": "deleted"}
+    except KeyError as exc:
+        raise HTTPException(404, "Graph not found") from exc
+    finally:
+        store.close()
+
+
+@app.post("/api/flow/graphs/{definition_id}/publish")
+async def publish_flow_graph(request: Request, definition_id: str):
+    _require_flow_designer(request)
+    store = _graph_store()
+    try:
+        return {"version": store.publish(definition_id)}
+    except KeyError as exc:
+        raise HTTPException(404, "Graph not found") from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        store.close()
+
+
+@app.post("/api/flow/graphs/{definition_id}/invoke")
+@app.post("/api/webhooks/flows/{definition_id}")
+async def invoke_flow_graph(request: Request, definition_id: str, body: GraphInvoke):
+    _verify_token(request)
+
+    def execute():
+        store = _graph_store()
+        try:
+            version = body.version or store.latest_version(definition_id)
+            if version is None:
+                raise ValueError("Publish this graph before invoking it")
+            return store.run(definition_id, version, body.inputs)
+        finally:
+            store.close()
+
+    try:
+        return await _asyncio.to_thread(execute)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @app.post("/api/flow/runs/filter")
 async def filter_flow_runs(request: Request, body: FlowRunFilter):
     """Filter by POST: structured predicates do not fit in a query string."""
@@ -2766,16 +3007,75 @@ async def get_flow_event_chain(request: Request, event_id: str):
 # principal, so a single-user install sees no change at all.
 
 @app.get("/auth/status")
-async def auth_status():
+async def auth_status(request: Request):
     """What the login page needs before anyone has logged in — deliberately
     unauthenticated, and deliberately says nothing about who exists."""
     from gyrfalcon import identity
     from gyrfalcon.auth.oidc import oidc_config
+    from gyrfalcon.auth.store import get_auth_store
 
+    local_enabled = _ensure_local_password_auth()
+    principal = _resolve_principal(request) if local_enabled else None
+    credential = get_auth_store().local_credential_for_user(principal.user_id) if principal else None
     return {
         "identity_enabled": identity.identity_enabled(),
         "oidc_configured": oidc_config().enabled,
+        "login_required": local_enabled or identity.identity_enabled(),
+        "authenticated": principal is not None,
+        "username": "admin" if principal and credential else None,
+        "must_change_password": bool(credential and credential["must_change"]),
     }
+
+
+class LocalLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LocalPasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post("/auth/local/login")
+async def local_password_login(request: Request, body: LocalLoginRequest):
+    from gyrfalcon.auth.session import COOKIE_NAME, get_session_store
+    from gyrfalcon.auth.store import get_auth_store
+
+    if not _ensure_local_password_auth():
+        raise HTTPException(503, "Local password login is not configured")
+    source_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    with _local_login_failures_lock:
+        count, started = _local_login_failures.get(source_ip, (0, now))
+        if now - started > 900:
+            count, started = 0, now
+        if count >= 8:
+            raise HTTPException(429, "Too many sign-in attempts. Try again in 15 minutes.")
+    principal, _must_change = get_auth_store().authenticate_local(body.username, body.password)
+    if principal is None:
+        with _local_login_failures_lock:
+            _local_login_failures[source_ip] = (count + 1, started)
+        raise HTTPException(401, "Invalid username or password")
+    with _local_login_failures_lock:
+        _local_login_failures.pop(source_ip, None)
+    session = get_session_store().create(principal.user_id, principal.tenant_id)
+    response = JSONResponse({"status": "signed in"})
+    response.set_cookie(COOKIE_NAME, session.session_id, httponly=True,
+                        samesite="lax", secure=request.url.scheme == "https",
+                        max_age=int(session.ttl), path="/")
+    return response
+
+
+@app.post("/auth/local/password")
+async def local_password_change(request: Request, body: LocalPasswordChangeRequest):
+    principal = _verify_token(request)
+    from gyrfalcon.auth.store import get_auth_store
+    if not get_auth_store().change_local_password(
+        principal.user_id, body.current_password, body.new_password,
+    ):
+        raise HTTPException(400, "Current password is incorrect or this account has no local password")
+    return {"status": "password changed"}
 
 
 @app.get("/auth/login")
@@ -2877,6 +3177,218 @@ async def list_api_keys(request: Request):
     from gyrfalcon.auth.store import get_auth_store
 
     return {"keys": get_auth_store().list_api_keys(principal.user_id)}
+
+
+def _require_security_admin(request: Request):
+    principal = _verify_token(request)
+    if not principal.has_role("admin"):
+        raise HTTPException(403, "Administrator role required")
+    return principal
+
+
+class SecurityUserCreate(BaseModel):
+    username: str
+    password: str
+    display_name: str = ""
+    email: str = ""
+    roles: list[str] = []
+    group_ids: list[str] = []
+
+
+class SecurityUserUpdate(BaseModel):
+    display_name: str = ""
+    email: str = ""
+    disabled: bool = False
+    roles: list[str] = []
+    group_ids: list[str] = []
+
+
+class SecurityGroupBody(BaseModel):
+    name: str
+    description: str = ""
+
+
+class SecurityRoleBody(BaseModel):
+    name: str
+    label: str = ""
+    menu_id: Optional[str] = None
+    description: str = ""
+    enabled: bool = True
+
+
+def _access_role_payload(role):
+    return {"id": role.id, "name": role.name, "label": role.label,
+            "menu_id": role.menu_id, "description": role.description,
+            "enabled": role.enabled}
+
+
+@app.get("/api/security/access")
+async def get_security_access(request: Request):
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
+    from gyrfalcon.nav.store import get_nav_store
+    auth = get_auth_store()
+    nav = get_nav_store()
+    if not nav.list_roles():
+        from gyrfalcon.nav.seed import ensure_seeded
+        ensure_seeded(nav)
+        nav = get_nav_store()
+    return {
+        "users": auth.list_tenant_users(principal.tenant_id),
+        "groups": auth.list_groups(principal.tenant_id),
+        "roles": [_access_role_payload(role) for role in nav.list_roles()],
+        "menus": [{"id": menu.id, "name": menu.name} for menu in nav.list_menus()],
+    }
+
+
+@app.post("/api/security/access/users")
+async def create_security_user(request: Request, body: SecurityUserCreate):
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
+    from gyrfalcon.nav.store import get_nav_store
+    allowed = {role.name for role in get_nav_store().list_roles()}
+    if not set(body.roles).issubset(allowed):
+        raise HTTPException(400, "One or more selected roles do not exist")
+    auth = get_auth_store()
+    if not set(body.group_ids).issubset({group["id"] for group in auth.list_groups(principal.tenant_id)}):
+        raise HTTPException(400, "One or more selected groups do not exist")
+    try:
+        user = auth.create_local_user(
+            principal.tenant_id, body.username, body.password, body.display_name,
+            body.email, body.roles or ["app_developer"],
+        )
+        auth.set_user_groups(principal.tenant_id, user["id"], body.group_ids)
+        user = next(u for u in auth.list_tenant_users(principal.tenant_id) if u["id"] == user["id"])
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"user": user}
+
+
+@app.put("/api/security/access/users/{user_id}")
+async def update_security_user(request: Request, user_id: str, body: SecurityUserUpdate):
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
+    from gyrfalcon.nav.store import get_nav_store
+    auth = get_auth_store()
+    allowed = {role.name for role in get_nav_store().list_roles()} | {"admin"}
+    if not set(body.roles).issubset(allowed):
+        raise HTTPException(400, "One or more selected roles do not exist")
+    if not set(body.group_ids).issubset({group["id"] for group in auth.list_groups(principal.tenant_id)}):
+        raise HTTPException(400, "One or more selected groups do not exist")
+    before = next((u for u in auth.list_tenant_users(principal.tenant_id) if u["id"] == user_id), None)
+    if before is None:
+        raise HTTPException(404, "User not found")
+    if "admin" in before["roles"] and ("admin" not in body.roles or body.disabled):
+        admins = [u for u in auth.list_tenant_users(principal.tenant_id) if "admin" in u["roles"] and not u["disabled"]]
+        if len(admins) <= 1:
+            raise HTTPException(400, "The last active administrator cannot be disabled or demoted")
+    if not auth.update_tenant_user(
+        principal.tenant_id, user_id, display_name=body.display_name,
+        email=body.email, disabled=body.disabled, roles=body.roles,
+    ):
+        raise HTTPException(404, "User not found")
+    try:
+        if not auth.set_user_groups(principal.tenant_id, user_id, body.group_ids):
+            raise HTTPException(404, "User not found")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"user": next(u for u in auth.list_tenant_users(principal.tenant_id) if u["id"] == user_id)}
+
+
+class SecurityPasswordReset(BaseModel):
+    password: str
+
+
+@app.post("/api/security/access/users/{user_id}/password")
+async def reset_security_user_password(request: Request, user_id: str, body: SecurityPasswordReset):
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
+    if not get_auth_store().reset_local_password(principal.tenant_id, user_id, body.password):
+        raise HTTPException(404, "Local password account not found")
+    return {"status": "password reset", "must_change_password": True}
+
+
+@app.post("/api/security/access/groups")
+async def create_security_group(request: Request, body: SecurityGroupBody):
+    principal = _require_security_admin(request)
+    if not body.name.strip():
+        raise HTTPException(400, "Group name is required")
+    from gyrfalcon.auth.store import get_auth_store
+    try:
+        return {"group": get_auth_store().create_group(principal.tenant_id, body.name, body.description)}
+    except Exception as exc:
+        raise HTTPException(409, "A group with that name already exists") from exc
+
+
+@app.put("/api/security/access/groups/{group_id}")
+async def update_security_group(request: Request, group_id: str, body: SecurityGroupBody):
+    principal = _require_security_admin(request)
+    if not body.name.strip():
+        raise HTTPException(400, "Group name is required")
+    from gyrfalcon.auth.store import get_auth_store
+    try:
+        updated = get_auth_store().update_group(principal.tenant_id, group_id, body.name, body.description)
+    except Exception as exc:
+        raise HTTPException(409, "A group with that name already exists") from exc
+    if not updated:
+        raise HTTPException(404, "Group not found")
+    return {"status": "updated"}
+
+
+@app.delete("/api/security/access/groups/{group_id}")
+async def delete_security_group(request: Request, group_id: str):
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
+    if not get_auth_store().delete_group(principal.tenant_id, group_id):
+        raise HTTPException(404, "Group not found")
+    return {"status": "deleted"}
+
+
+@app.post("/api/security/access/roles")
+async def create_security_role(request: Request, body: SecurityRoleBody):
+    _require_security_admin(request)
+    from gyrfalcon.nav.store import get_nav_store
+    nav = get_nav_store()
+    if not body.name.strip():
+        raise HTTPException(400, "Role name is required")
+    if body.menu_id and nav.get_menu(body.menu_id) is None:
+        raise HTTPException(400, "Selected menu does not exist")
+    try:
+        role = nav.create_role(
+            body.name.strip(), label=body.label.strip() or body.name.strip(),
+            menu_id=body.menu_id or None, description=body.description.strip(), enabled=body.enabled,
+        )
+    except Exception as exc:
+        raise HTTPException(409, "A role with that name already exists or its menu is invalid") from exc
+    return {"role": _access_role_payload(role)}
+
+
+@app.put("/api/security/access/roles/{role_id}")
+async def update_security_role(request: Request, role_id: str, body: SecurityRoleBody):
+    _require_security_admin(request)
+    from gyrfalcon.nav.store import get_nav_store
+    nav = get_nav_store()
+    if body.menu_id and nav.get_menu(body.menu_id) is None:
+        raise HTTPException(400, "Selected menu does not exist")
+    try:
+        role = nav.update_role(
+            role_id, name=body.name.strip(), label=body.label.strip() or body.name.strip(),
+            menu_id=body.menu_id or None, description=body.description.strip(), enabled=body.enabled,
+        )
+    except Exception as exc:
+        raise HTTPException(409, "A role with that name already exists or its menu is invalid") from exc
+    if role is None:
+        raise HTTPException(404, "Role not found")
+    return {"role": _access_role_payload(role)}
+
+
+@app.delete("/api/security/access/roles/{role_id}")
+async def delete_security_role(request: Request, role_id: str):
+    _require_security_admin(request)
+    from gyrfalcon.nav.store import get_nav_store
+    if not get_nav_store().delete_role(role_id):
+        raise HTTPException(404, "Role not found")
+    return {"status": "deleted"}
 
 
 @app.post("/api/auth/keys")

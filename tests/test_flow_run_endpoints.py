@@ -9,10 +9,13 @@ undo, so they are pinned here at the layer an operator actually hits them.
 from __future__ import annotations
 
 import time
+import os
 
 import pytest
 
 pytest.importorskip("fastapi.testclient", reason="needs fastapi's TestClient")
+TEST_PG_DSN = os.environ.get("GYRFALCON_TEST_PG_DSN")
+pytestmark = pytest.mark.skipif(not TEST_PG_DSN, reason="Disposable PostgreSQL test DSN required")
 
 
 @pytest.fixture(scope="module")
@@ -42,12 +45,14 @@ def headers(app_client):
 
 
 @pytest.fixture()
-def store(app_client, tmp_path):
-    """A per-test SQLite store injected as the process-wide flow store, so the
-    endpoints under test read and write this file and nothing else."""
+def store(app_client):
+    """A disposable PostgreSQL test store injected as the process-wide flow store."""
     from gyrfalcon.flow.store import RunStore, set_store
 
-    s = RunStore(db_path=tmp_path / "flow.db")
+    s = RunStore(dsn=TEST_PG_DSN)
+    with s._db.connect() as conn:
+        conn.execute("TRUNCATE fnd_flow_runs, fnd_flow_run_states, fnd_flow_events, "
+                     "fnd_flow_run_edges RESTART IDENTITY CASCADE")
     set_store(s)
     yield s
     set_store(None)

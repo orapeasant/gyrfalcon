@@ -237,7 +237,7 @@ export function TokenomicsPage() {
 
   return (
     <div style={{ color: "var(--fg)", maxWidth: 1200 }}>
-      <h2 style={{ marginBottom: "0.25rem" }}>Tokenomics</h2>
+      <h2 style={{ marginBottom: "0.25rem" }}>Estimation</h2>
       <p style={{ color: "var(--fg-muted)", marginTop: 0, fontSize: "0.9rem" }}>
         Estimate token count and cost before you spend anything. No model is
         called — counting is local, or via Anthropic's free token-counting API.

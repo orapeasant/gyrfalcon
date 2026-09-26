@@ -94,7 +94,7 @@ class TestStructure:
             args += [2] * (len(params) - 1)
             try:
                 stmt, bound = fn(*args)
-            except TypeError:
+            except (TypeError, ValueError):
                 continue
             checked += 1
             assert "tenant_id = ?" in stmt, f"{name} ignores its scope: {stmt}"

@@ -7,6 +7,7 @@
 import React, { useEffect, useState } from "react";
 import { Inbox, Clock3, AlertTriangle, Check, X, RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
+import { CollectionViewToggle, collectionCardStyle, collectionStyle, useCollectionView } from "../components/CollectionViewToggle";
 
 interface PendingTask {
   flow_run_id: string;
@@ -49,6 +50,7 @@ export function FlowTasksPage() {
   const [tasks, setTasks] = useState<PendingTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<Set<string>>(new Set());
+  const [view, setView] = useCollectionView("flow-tasks");
 
   const load = async () => {
     setLoading(true);
@@ -82,6 +84,7 @@ export function FlowTasksPage() {
       <div style={S.head}>
         <h1 style={S.h1}>My Tasks</h1>
         <span style={{ fontSize: "12px", color: "var(--fg-muted)" }}>{tasks.length} pending</span>
+        <CollectionViewToggle view={view} onChange={setView} label="Task view" />
         <button style={S.refreshBtn} onClick={load}><RefreshCw size={12} /> Refresh</button>
       </div>
 
@@ -93,8 +96,8 @@ export function FlowTasksPage() {
           Nothing waiting on you right now.
         </div>
       ) : (
-        tasks.map((t) => (
-          <div key={t.flow_run_id} style={S.card(t.expired)}>
+        <div style={collectionStyle(view)}>{tasks.map((t) => (
+          <div key={t.flow_run_id} style={{ ...S.card(t.expired), ...collectionCardStyle(view) }}>
             <div style={S.row}>
               <span style={S.runId}>{t.flow_run_id}</span>
               {t.pause_key && <span style={{ fontSize: "11px", color: "var(--fg-muted)" }}>({t.pause_key})</span>}
@@ -126,7 +129,7 @@ export function FlowTasksPage() {
               </div>
             )}
           </div>
-        ))
+        ))}</div>
       )}
     </div>
   );

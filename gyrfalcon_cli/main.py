@@ -102,7 +102,7 @@ def main():
     )
     run_mode_group.add_argument(
         "--client", action="store_const", dest="run_mode", const="CLIENT",
-        help="Run in CLIENT mode (single-user; always local SQLite). Default. "
+        help="Run in CLIENT mode (single-user; PostgreSQL still required). Default. "
              "Ignored if RUN_MODE is set in .env.",
     )
 
@@ -140,8 +140,8 @@ def main():
     sub_pricing.add_argument("--model", help="Show the resolved rates for one model")
     sub_sessions = subparsers.add_parser("sessions", help="Session storage and token history")
     sub_sessions.add_argument(
-        "action", nargs="?", default="status", choices=["status", "migrate"],
-        help="show storage and spend, or copy the legacy SQLite store in",
+        "action", nargs="?", default="status", choices=["status"],
+        help="show PostgreSQL storage and spend",
     )
     sub_sessions.add_argument("--session", help="Show one session's call history")
 

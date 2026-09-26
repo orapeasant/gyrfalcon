@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { fetchJSON } from '../lib/api';
+import { CollectionViewToggle, collectionCardStyle, collectionStyle, useCollectionView } from '../components/CollectionViewToggle';
 
 interface ProviderProfile {
   id: string;
@@ -13,6 +14,7 @@ interface ProviderProfile {
 export function ProfilesPage() {
   const [profiles, setProfiles] = useState<ProviderProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useCollectionView('profiles');
 
   useEffect(() => { loadProfiles(); }, []);
 
@@ -34,12 +36,12 @@ export function ProfilesPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Provider Profiles</h1>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}><h1 className="text-2xl font-bold">Provider Profiles</h1><CollectionViewToggle view={view} onChange={setView} label="Profile view" /></div>
 
-      <div className="space-y-3">
+      <div style={collectionStyle(view)}>
         {profiles.length === 0 && <p className="text-gray-500">No provider profiles configured.</p>}
         {profiles.map(profile => (
-          <div key={profile.id} className={`border rounded p-4 ${profile.is_active ? 'border-green-400 bg-green-50' : ''}`}>
+          <div key={profile.id} className={`border rounded p-4 ${profile.is_active ? 'border-green-400 bg-green-50' : ''}`} style={collectionCardStyle(view)}>
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-semibold">

@@ -837,15 +837,6 @@ class AIAgent:
                 cache_read_tokens=usage.cache_read_tokens,
                 cache_write_tokens=usage.cache_write_tokens,
             )
-            self.session_db.update_token_counts(
-                self.session_id, # type: ignore[arg-type]
-                input_tokens=usage.uncached_input_tokens,
-                output_tokens=usage.output_tokens,
-                cache_read_tokens=usage.cache_read_tokens,
-                cache_write_tokens=usage.cache_write_tokens,
-                reasoning_tokens=usage.reasoning_tokens,
-                cost=call_cost,
-            )
             logger.info(
                 "tokens: in=%d out=%d%s%s | cost=%.6f USD (%.4f AIC) | model=%s",
                 usage.uncached_input_tokens, usage.output_tokens,
@@ -968,14 +959,6 @@ class AIAgent:
                 usage.reasoning_tokens,
                 cache_read_tokens=usage.cache_read_tokens,
                 cache_write_tokens=usage.cache_write_tokens,
-            )
-            self.session_db.update_token_counts(
-                self.session_id,  # type: ignore[arg-type]
-                input_tokens=usage.uncached_input_tokens,
-                output_tokens=usage.output_tokens,
-                cache_read_tokens=usage.cache_read_tokens,
-                cache_write_tokens=usage.cache_write_tokens,
-                cost=call_cost,
             )
             logger.info(
                 "tokens: in=%d out=%d%s%s | cost=%.6f USD (%.4f AIC) | model=%s",

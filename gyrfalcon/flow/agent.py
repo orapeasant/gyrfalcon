@@ -20,7 +20,7 @@ from gyrfalcon.flow import states as st
 from gyrfalcon.flow.context import get_flow_run_context
 from gyrfalcon.flow.futures import record_encapsulation
 from gyrfalcon.flow.states import State
-from gyrfalcon.flow.templates import Flow, task
+from gyrfalcon.flow.templates import Flow, activity
 
 logger = logging.getLogger("gyrfalcon.flow.agent")
 
@@ -61,7 +61,7 @@ def agent_step(__fn: Optional[Callable] = None, **options: Any):
     return wrapper
 
 
-@task(retries=2, retry_delay_seconds=[1, 2, 4])
+@activity(retries=2, retry_delay_seconds=[1, 2, 4])
 def model_call(prompt: str, model: Optional[str] = None, **kwargs: Any) -> Any:
     """One model call is one task (§13.3.1).
 

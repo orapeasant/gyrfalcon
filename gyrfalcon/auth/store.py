@@ -14,6 +14,10 @@ ordinary request handling. `auth/` is that boundary.
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
+import base64
+import os
 import threading
 import time
 import uuid
@@ -37,6 +41,191 @@ class AuthStore:
         self.schema_version = ensure_schema(self._db)
 
     # -- organizations -------------------------------------------------------
+    @staticmethod
+    def _password_hash(password: str, salt: Optional[bytes] = None) -> str:
+        salt = salt or os.urandom(16)
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 310_000)
+        return "pbkdf2_sha256$310000$%s$%s" % (
+            base64.urlsafe_b64encode(salt).decode("ascii"),
+            base64.urlsafe_b64encode(digest).decode("ascii"),
+        )
+
+    @staticmethod
+    def _password_matches(password: str, encoded: str) -> bool:
+        try:
+            algorithm, rounds, salt_text, expected_text = encoded.split("$", 3)
+            if algorithm != "pbkdf2_sha256" or int(rounds) != 310_000:
+                return False
+            salt = base64.urlsafe_b64decode(salt_text.encode("ascii"))
+            expected = base64.urlsafe_b64decode(expected_text.encode("ascii"))
+            actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 310_000)
+            return hmac.compare_digest(actual, expected)
+        except (ValueError, TypeError):
+            return False
+
+    def ensure_default_admin(self) -> None:
+        """Create the initial admin once; never reset an existing password."""
+        if self.local_credential("admin") is not None:
+            return
+        if self.get_org("local") is None:
+            try:
+                self.create_org("Default", org_id="local")
+            except Exception:
+                if self.get_org("local") is None:
+                    raise
+        user = self.find_user("local-password", "admin")
+        if user is None:
+            now = time.time()
+            user_id = _new_id()
+            with self._db.connect() as conn:
+                conn.execute(sql.INSERT_USER, (user_id, "local-password", "admin", "", "Administrator", now, None))
+            user = self.get_user(user_id)
+        self.add_member(user["id"], "local", roles=("admin", "operator"))
+        try:
+            with self._db.connect() as conn:
+                conn.execute(sql.INSERT_LOCAL_CREDENTIAL,
+                             ("admin", user["id"], self._password_hash("admin"), 1, time.time()))
+        except Exception:
+            # A concurrent first request may have inserted it.
+            if self.local_credential("admin") is None:
+                raise
+
+    def local_credential(self, username: str) -> Optional[dict]:
+        with self._db.connect() as conn:
+            row = conn.fetchone(sql.FIND_LOCAL_CREDENTIAL, (username.strip().lower(),))
+        return dict(row) if row is not None else None
+
+    def local_credential_for_user(self, user_id: str) -> Optional[dict]:
+        with self._db.connect() as conn:
+            row = conn.fetchone(sql.GET_LOCAL_CREDENTIAL_BY_USER, (user_id,))
+        return dict(row) if row is not None else None
+
+    def authenticate_local(self, username: str, password: str) -> tuple[Optional[Principal], bool]:
+        credential = self.local_credential(username)
+        if credential is None or not self._password_matches(password, credential["password_hash"]):
+            # Keep an unknown username near the cost of a failed password check.
+            self._password_matches(password, self._password_hash("", b"gyrfalcon-dummy!!"))
+            return None, False
+        with self._db.connect() as conn:
+            conn.execute(sql.TOUCH_LOCAL_LOGIN, (time.time(), credential["user_id"]))
+        principal = self.principal_for(credential["user_id"], source="password")
+        return principal, bool(credential["must_change"])
+
+    def change_local_password(self, user_id: str, current_password: str, password: str) -> bool:
+        with self._db.connect() as conn:
+            row = conn.fetchone(sql.GET_LOCAL_CREDENTIAL_BY_USER, (user_id,))
+        if row is None or not self._password_matches(current_password, row["password_hash"]):
+            return False
+        with self._db.connect() as conn:
+            conn.execute(sql.UPDATE_LOCAL_CREDENTIAL,
+                         (self._password_hash(password), time.time(), user_id))
+        return True
+
+    def reset_local_password(self, tenant_id: str, user_id: str, password: str) -> bool:
+        with self._db.connect() as conn:
+            if conn.fetchone(sql.GET_TENANT_USER, (user_id, tenant_id)) is None:
+                return False
+            cur = conn.execute(sql.RESET_LOCAL_CREDENTIAL,
+                               (self._password_hash(password), time.time(), user_id))
+            return bool(getattr(cur, "rowcount", 0))
+
+    def has_local_credentials(self) -> bool:
+        with self._db.connect() as conn:
+            return conn.fetchone(sql.HAS_LOCAL_CREDENTIALS) is not None
+
+    # -- tenant users and groups --------------------------------------------
+    def list_tenant_users(self, tenant_id: str) -> list[dict]:
+        with self._db.connect() as conn:
+            rows = conn.fetchall(sql.LIST_TENANT_USERS, (tenant_id,))
+        users = []
+        for row in rows:
+            user = dict(row)
+            user["roles"] = json.loads(user.get("roles") or "[]")
+            user["group_ids"] = self.user_group_ids(tenant_id, user["id"])
+            user["disabled"] = bool(user["disabled"])
+            users.append(user)
+        return users
+
+    def create_local_user(self, tenant_id: str, username: str, password: str,
+                          display_name: str, email: str, roles: Sequence[str]) -> dict:
+        normalized = username.strip().lower()
+        if not normalized or any(ch.isspace() for ch in normalized):
+            raise ValueError("Username must be non-empty and contain no spaces")
+        if self.local_credential(normalized) is not None:
+            raise ValueError("That username is already in use")
+        now = time.time()
+        user_id = _new_id()
+        with self._db.connect() as conn:
+            conn.execute(sql.INSERT_USER, (user_id, "local-password", normalized,
+                                           email.strip(), display_name.strip() or normalized,
+                                           now, None))
+            conn.execute(sql.insert_membership(self._db.dialect),
+                         (user_id, tenant_id, json.dumps(sorted(set(roles))), now))
+            conn.execute(sql.INSERT_LOCAL_CREDENTIAL,
+                         (normalized, user_id, self._password_hash(password), 0, now))
+        return next(user for user in self.list_tenant_users(tenant_id) if user["id"] == user_id)
+
+    def update_tenant_user(self, tenant_id: str, user_id: str, *, display_name: str,
+                           email: str, disabled: bool, roles: Sequence[str]) -> bool:
+        with self._db.connect() as conn:
+            if conn.fetchone(sql.GET_TENANT_USER, (user_id, tenant_id)) is None:
+                return False
+            conn.execute(sql.UPDATE_USER_PROFILE,
+                         (display_name, email, 1 if disabled else 0, user_id))
+            conn.execute(sql.UPDATE_USER_ROLES,
+                         (json.dumps(sorted(set(roles))), user_id, tenant_id))
+        return True
+
+    def list_groups(self, tenant_id: str) -> list[dict]:
+        with self._db.connect() as conn:
+            rows = conn.fetchall(sql.LIST_AUTH_GROUPS, (tenant_id,))
+        groups = [dict(row) for row in rows]
+        for group in groups:
+            group["user_ids"] = self.group_user_ids(tenant_id, group["id"])
+        return groups
+
+    def create_group(self, tenant_id: str, name: str, description: str = "") -> dict:
+        group_id = _new_id()
+        with self._db.connect() as conn:
+            conn.execute(sql.INSERT_AUTH_GROUP,
+                         (group_id, tenant_id, name.strip(), description.strip(), time.time()))
+        return next(group for group in self.list_groups(tenant_id) if group["id"] == group_id)
+
+    def update_group(self, tenant_id: str, group_id: str, name: str, description: str) -> bool:
+        with self._db.connect() as conn:
+            cur = conn.execute(sql.UPDATE_AUTH_GROUP, (name.strip(), description.strip(), tenant_id, group_id))
+            return bool(getattr(cur, "rowcount", 0))
+
+    def delete_group(self, tenant_id: str, group_id: str) -> bool:
+        with self._db.connect() as conn:
+            conn.execute(sql.DELETE_AUTH_GROUP_MEMBERS, (tenant_id, group_id))
+            cur = conn.execute(sql.DELETE_AUTH_GROUP, (tenant_id, group_id))
+            return bool(getattr(cur, "rowcount", 0))
+
+    def user_group_ids(self, tenant_id: str, user_id: str) -> list[str]:
+        with self._db.connect() as conn:
+            rows = conn.fetchall(sql.LIST_USER_GROUPS, (tenant_id, user_id))
+        return [row["group_id"] for row in rows]
+
+    def group_user_ids(self, tenant_id: str, group_id: str) -> list[str]:
+        with self._db.connect() as conn:
+            rows = conn.fetchall(sql.LIST_GROUP_MEMBERS, (tenant_id, group_id))
+        return [row["user_id"] for row in rows]
+
+    def set_user_groups(self, tenant_id: str, user_id: str, group_ids: Sequence[str]) -> bool:
+        wanted = sorted(set(group_ids))
+        with self._db.connect() as conn:
+            if conn.fetchone(sql.GET_TENANT_USER, (user_id, tenant_id)) is None:
+                return False
+            known = {row["id"] for row in conn.fetchall(sql.LIST_AUTH_GROUPS, (tenant_id,))}
+            if not set(wanted).issubset(known):
+                raise ValueError("One or more groups do not exist in this organization")
+            conn.execute(sql.DELETE_USER_GROUPS, (tenant_id, user_id))
+            for group_id in wanted:
+                conn.execute(sql.INSERT_GROUP_MEMBER,
+                             (tenant_id, group_id, user_id, time.time()))
+        return True
+
     def create_org(self, name: str, org_id: Optional[str] = None) -> dict:
         org_id = org_id or _new_id()
         with self._db.connect() as conn:

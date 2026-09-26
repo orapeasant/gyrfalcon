@@ -25,25 +25,15 @@ def session_search(args: dict, **kwargs) -> str:
     try:
         if action == "list_recent":
             # List recent messages chronologically
-            cursor = db.conn.execute(
-                """SELECT m.session_id, m.role, m.content, m.created_at,
-                          s.title as session_title
-                   FROM messages m
-                   JOIN sessions s ON s.id = m.session_id
-                   WHERE m.role = ?
-                   ORDER BY m.created_at DESC
-                   LIMIT ?""",
-                (role_filter or "user", limit),
-            )
-            rows = cursor.fetchall()
+            rows = db.list_recent_messages(role_filter or "user", limit)
             formatted = []
             for row in rows:
                 formatted.append({
-                    "session_id": row[0][:8],
-                    "session_title": row[4] or "",
-                    "role": row[1],
-                    "content_preview": (row[2] or "")[:500],
-                    "timestamp": row[3],
+                    "session_id": row["session_id"][:8],
+                    "session_title": row["session_title"] or "",
+                    "role": row["role"],
+                    "content_preview": (row["content"] or "")[:500],
+                    "timestamp": row["created_at"],
                 })
             return json.dumps({"results": formatted, "action": "list_recent"})
 

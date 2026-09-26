@@ -68,6 +68,10 @@ class Dialect(ABC):
         """Turn a user's words into the term this backend's matcher expects."""
         return f"%{query}%"
 
+    def date_bucket(self, grain: str, expression: str) -> str:
+        """Return a UTC calendar bucket expression for a validated grain."""
+        raise NotImplementedError(f"{self.name} does not implement date buckets")
+
     @abstractmethod
     def type_map(self) -> dict[str, str]:
         """Neutral column type -> this backend's spelling.

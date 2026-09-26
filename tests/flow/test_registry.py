@@ -96,8 +96,8 @@ class TestDiscoverFlows:
         get_definition = sym("gyrfalcon.flow.registry:get_definition")
 
         (tmp_path / "runnable.py").write_text(
-            "from gyrfalcon.flow import flow, task\n\n"
-            "@task(retries=1)\n"
+            "from gyrfalcon.flow import flow, activity\n\n"
+            "@activity(retries=1)\n"
             "def discovered_task(x):\n    return x * 2\n\n"
             "@flow\n"
             "def discovered_flow_f(n=3):\n    return discovered_task(n)\n"

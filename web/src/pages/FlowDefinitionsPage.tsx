@@ -15,6 +15,7 @@
 import React, { useEffect, useState } from "react";
 import { FileCode, RefreshCw, Tag, Play, Edit2, Copy, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
+import { CollectionViewToggle, collectionCardStyle, collectionStyle, useCollectionView } from "../components/CollectionViewToggle";
 
 interface FlowDefinition {
   name: string;
@@ -70,6 +71,7 @@ export function FlowDefinitionsPage() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<{ name: string; runId: string } | null>(null);
   const [importErrors, setImportErrors] = useState<Record<string, string>>({});
+  const [view, setView] = useCollectionView("flow-definitions");
 
   const load = async () => {
     setLoading(true);
@@ -116,6 +118,7 @@ export function FlowDefinitionsPage() {
       <div style={S.head}>
         <h1 style={S.h1}>Flow Definitions</h1>
         <span style={{ fontSize: "12px", color: "var(--fg-muted)" }}>{definitions.length}</span>
+        <CollectionViewToggle view={view} onChange={setView} label="Definition view" />
         <button style={S.refreshBtn} onClick={rescan}><RefreshCw size={12} /> Refresh</button>
       </div>
 
@@ -149,8 +152,8 @@ export function FlowDefinitionsPage() {
           A <code>@flow</code>-decorated function registers itself the first time its module is imported.
         </div>
       ) : (
-        definitions.map((d) => (
-          <div key={d.name} style={S.card}>
+        <div style={collectionStyle(view)}>{definitions.map((d) => (
+          <div key={d.name} style={{ ...S.card, ...collectionCardStyle(view) }}>
             <div style={S.row}>
               <FileCode size={15} style={{ color: "var(--fg-muted)" }} />
               <span style={S.name}>{d.name}</span>
@@ -197,7 +200,7 @@ export function FlowDefinitionsPage() {
               </div>
             )}
           </div>
-        ))
+        ))}</div>
       )}
 
       {runTarget && (

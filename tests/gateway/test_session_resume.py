@@ -6,6 +6,7 @@ agent creation, which a fake store cannot."""
 from __future__ import annotations
 
 import pytest
+import os
 from _fakes import DEFAULT_PLATFORM, FakeAdapter, ev, run
 
 from gyrfalcon.gateway.config import GatewayConfig
@@ -38,8 +39,12 @@ class DBAgent:
 
 
 @pytest.fixture()
-def db(tmp_path):
-    d = SessionDB(tmp_path / "sessions.db")
+def db():
+    dsn = os.environ.get("GYRFALCON_TEST_PG_DSN")
+    if not dsn:
+        pytest.skip("Disposable PostgreSQL test DSN required")
+    d = SessionDB(dsn=dsn)
+    d.set_meta("gateway.session:fake:D1:t1", "")
     yield d
     d.close()
 

@@ -25,7 +25,6 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "websockets>=12.0",
     "pydantic>=2.7",
-    "aiosqlite>=0.20.0",
     "python-dotenv>=1.0",
     "croniter>=2.0",
     "filelock>=3.15",
@@ -45,12 +44,6 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
     "mypy>=1.10",
-]
-# PostgreSQL flow store (spec 15-flow.md §15.3a). Optional on purpose: SQLite is
-# the default backend and needs nothing installed, so a single-box install stays
-# dependency-free. pg8000 is pure Python — no libpq, no build step.
-postgres = [
-    "pg8000>=1.31",
 ]
 # Slack gateway adapter (spec 18-slack.md §2). Optional for the same reason:
 # a platform nobody enabled should not cost anyone a dependency. Socket Mode

@@ -6,9 +6,7 @@ This is the bridge between the agent loop and `session_usage`. It is written
 defensively on purpose: a conversation must not fail because a cost-accounting
 row could not be written. Every failure is logged and swallowed.
 
-It is deliberately *additive* — the legacy SQLite store keeps its running
-session totals exactly as before, and this records the per-call detail those
-totals cannot express.
+The per-call row and session totals are written in one PostgreSQL transaction.
 """
 
 from __future__ import annotations

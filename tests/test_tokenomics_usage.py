@@ -4,6 +4,7 @@ Spec: `docs/spec/gyrfalcon/19-tokenomics.md` §19.6.
 """
 
 from types import SimpleNamespace
+import os
 
 import pytest
 
@@ -203,6 +204,7 @@ class TestCostPricing:
         assert cost == pytest.approx(r.input + r.cache_read + r.cache_write_5m)
 
 
+@pytest.mark.skipif(not os.environ.get("GYRFALCON_TEST_PG_DSN"), reason="Disposable PostgreSQL test DSN required")
 class TestEndToEndCapture:
     """The wiring: a provider response must land in the DB's cache columns.
 
@@ -219,7 +221,9 @@ class TestEndToEndCapture:
         from gyrfalcon.gyrfalcon_state import SessionDB
         from gyrfalcon.run_agent import AIAgent
 
-        db = SessionDB(tmp_path / "sessions.db")
+        dsn = os.environ["GYRFALCON_TEST_PG_DSN"]
+        monkeypatch.setenv("GYRFALCON_DB_DSN", dsn)
+        db = SessionDB(dsn=dsn)
         session_id = db.create_session(source="test", model="claude-sonnet-4")
         agent = AIAgent(model="claude-sonnet-4", quiet_mode=True,
                         skip_memory=True, skip_context_files=True)

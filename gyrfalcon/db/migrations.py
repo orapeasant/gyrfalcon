@@ -32,12 +32,14 @@ import time
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable
 
-from gyrfalcon.db import schema as sch
+from gyrfalcon.db import legacy_schema as sch
+from gyrfalcon.db import schema as current_schema
 
 if TYPE_CHECKING:
     from gyrfalcon.db.base import Connection, Database, Dialect
 
 VERSION_TABLE = "flow_schema_version"
+CURRENT_VERSION_TABLE = "fnd_flow_schema_version"
 
 
 @dataclass(frozen=True)
@@ -317,9 +319,170 @@ def _v7_sessions(conn: "Connection", dialect: "Dialect") -> None:
     (§15.4). A backend that offers neither simply gets no index, and search
     falls back to `LIKE` — slower, never wrong.
     """
-    conn.executescript(sch.render(sch.SESSION_TABLES, dialect))
+    # Freeze v7's three-table shape. Newer session columns and tables belong
+    # to v8; rendering the live SESSION_TABLES here would make a fresh upgrade
+    # create v8's tables before their parent keys exist.
+    old_columns = {
+        "sessions": (
+            "id", "source", "agent_id", "model", "parent_session_id",
+            "title", "system_prompt", "started_at", "ended_at",
+            "last_active", "uncached_input_tokens", "cache_read_tokens",
+            "cache_write_tokens", "output_tokens", "reasoning_tokens",
+            "cost_usd", "user_id", "tenant_id",
+        ),
+        "session_messages": (
+            "id", "session_id", "seq", "role", "content", "tool_call_id",
+            "tool_calls", "tool_name", "reasoning", "created_at",
+            "user_id", "tenant_id",
+        ),
+        "session_usage": (
+            "id", "session_id", "seq", "created_at", "provider", "model",
+            "uncached_input_tokens", "cache_read_tokens",
+            "cache_write_tokens", "cache_ttl", "output_tokens",
+            "reasoning_tokens", "cost_usd", "pricing_catalog_version",
+            "user_id", "tenant_id",
+        ),
+    }
+    old_indexes = {
+        "sessions": ("idx_sessions_owner", "idx_sessions_user", "idx_sessions_parent"),
+        "session_messages": ("idx_session_messages_session", "idx_session_messages_owner"),
+        "session_usage": ("idx_session_usage_session", "idx_session_usage_owner",
+                          "idx_session_usage_model"),
+    }
+    tables = tuple(
+        replace(
+            table,
+            columns=tuple(c for c in table.columns if c.name in old_columns[table.name]),
+            indexes=tuple(i for i in table.indexes if i.name in old_indexes[table.name]),
+            table_constraints=(),
+        )
+        for table in (sch.SESSIONS, sch.SESSION_MESSAGES, sch.SESSION_USAGE)
+    )
+    conn.executescript(sch.render(tables, dialect))
     for statement in dialect.fulltext_ddl("session_messages", "content"):
         conn.execute(statement)
+
+
+def _v8_session_history(conn: "Connection", dialect: "Dialect") -> None:
+    """Add environment-scoped session history and its derived state tables.
+
+    Preserve v7 rows in the `default` environment. No transcript or usage
+    data is rewritten or deleted. The legacy writers continue to work through
+    column defaults while the server read/write cutover is implemented later.
+    """
+    types = dialect.type_map()
+    additions = {
+        "sessions": (
+            "environment_id", "owner_user_id", "visibility",
+            "prompt_snapshot_id", "next_seq", "next_turn_seq",
+            "context_revision", "active_run_id", "lease_owner",
+            "lease_until", "lease_epoch",
+        ),
+        "session_messages": ("environment_id", "run_id", "input_ordinal"),
+        "session_usage": ("environment_id", "run_id"),
+    }
+    for table_name, column_names in additions.items():
+        table = next(t for t in sch.SESSION_TABLES if t.name == table_name)
+        existing = set(dialect.column_names(conn, table_name))
+        for column in table.columns:
+            if column.name not in column_names or column.name in existing:
+                continue
+            suffix = f" {column.constraints}" if column.constraints else ""
+            conn.execute(
+                f"ALTER TABLE {table_name} ADD COLUMN "
+                f"{column.name} {types[column.type]}{suffix}"
+            )
+    conn.execute("UPDATE sessions SET owner_user_id = user_id WHERE owner_user_id IS NULL")
+
+    for child in ("session_messages", "session_usage"):
+        mismatch = conn.fetchone(
+            f"SELECT 1 AS found FROM {child} c LEFT JOIN sessions s "
+            "ON s.id = c.session_id "
+            "WHERE s.id IS NULL OR s.tenant_id <> c.tenant_id "
+            "OR s.environment_id <> c.environment_id LIMIT 1"
+        )
+        if mismatch:
+            raise ValueError(f"{child} has rows outside their parent session scope")
+
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_scope_id "
+        "ON sessions(tenant_id, environment_id, id)"
+    )
+    for child in ("session_messages", "session_usage"):
+        conn.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{child}_order "
+            f"ON {child}(tenant_id, environment_id, session_id, seq)"
+        )
+    conn.executescript(sch.render((
+        sch.SESSION_ROUTES, sch.SESSION_CONTEXTS,
+        sch.SESSION_PROMPT_SNAPSHOTS, sch.SESSION_PARTICIPANTS,
+    ), dialect))
+
+
+def _v9_tokenomics_dimensions(conn: "Connection", dialect: "Dialect") -> None:
+    """Add report dimensions for group conversations and org user attributes."""
+    types = dialect.type_map()
+    sessions = set(dialect.column_names(conn, "sessions"))
+    if "group_id" not in sessions:
+        conn.execute(
+            f"ALTER TABLE sessions ADD COLUMN group_id {types['TEXT']}"
+        )
+    conn.executescript(sch.render((
+        sch.CONVERSATION_GROUPS,
+        sch.AUTH_MEMBERSHIP_ATTRIBUTES,
+    ), dialect))
+
+
+def _v10_local_credentials(conn: "Connection", dialect: "Dialect") -> None:
+    conn.executescript(sch.render((sch.AUTH_LOCAL_CREDENTIALS,), dialect))
+
+
+def _v11_user_groups(conn: "Connection", dialect: "Dialect") -> None:
+    conn.executescript(sch.render((sch.AUTH_GROUPS, sch.AUTH_GROUP_MEMBERSHIPS), dialect))
+
+
+def _v12_graph_definitions(conn: "Connection", dialect: "Dialect") -> None:
+    conn.executescript(sch.render(sch.GRAPH_TABLES, dialect))
+    columns = set(dialect.column_names(conn, "flow_runs"))
+    if not columns:
+        return
+    types = dialect.type_map()
+    if "definition_id" not in columns:
+        conn.execute(f"ALTER TABLE flow_runs ADD COLUMN definition_id {types['TEXT']}")
+    if "definition_version" not in columns:
+        conn.execute(f"ALTER TABLE flow_runs ADD COLUMN definition_version {types['INTEGER']}")
+
+
+def _v13_prefixed_tables(conn: "Connection", dialect: "Dialect") -> None:
+    """Rename the v12 tables in place, preserving rows, indexes and FKs."""
+    for table in sch.ALL_TABLES:
+        old = table.name
+        prefix = "ai_" if old == "sessions" or old.startswith("session_") \
+            or old == "conversation_groups" else "fnd_"
+        new = prefix + old
+        if dialect.column_names(conn, old):
+            if dialect.column_names(conn, new):
+                raise RuntimeError(f"Both old and new names exist for {old}")
+            conn.execute(f"ALTER TABLE {old} RENAME TO {new}")
+    conn.executescript(current_schema.render((current_schema.AI_STATE_META,), dialect))
+    conn.execute(f"ALTER TABLE {VERSION_TABLE} RENAME TO {CURRENT_VERSION_TABLE}")
+
+
+def _v14_mail_tables(conn: "Connection", dialect: "Dialect") -> None:
+    conn.executescript(current_schema.render(current_schema.MAIL_TABLES, dialect))
+
+
+def _v15_remove_unprefixed_version_artifact(conn: "Connection", dialect: "Dialect") -> None:
+    if not dialect.column_names(conn, VERSION_TABLE):
+        return
+    row = conn.fetchone(f"SELECT COUNT(*) AS n FROM {VERSION_TABLE}")
+    if row and int(row["n"]):
+        raise RuntimeError("Unprefixed flow schema history is non-empty; refusing to drop it")
+    conn.execute(f"DROP TABLE {VERSION_TABLE}")
+
+
+def _v16_migration_conflict_archive(conn: "Connection", dialect: "Dialect") -> None:
+    conn.executescript(current_schema.render(current_schema.MIGRATION_TABLES, dialect))
 
 
 MIGRATIONS: tuple[Migration, ...] = (
@@ -330,6 +493,15 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(5, "identity store: orgs, users, memberships, api keys", _v5_identity),
     Migration(6, "navigation: pages, functions, menus, items, roles, versions", _v6_navigation),
     Migration(7, "sessions, session_messages, session_usage (per-call tokens)", _v7_sessions),
+    Migration(8, "environment-scoped session history, routes and contexts", _v8_session_history),
+    Migration(9, "tokenomics report group and organization dimensions", _v9_tokenomics_dimensions),
+    Migration(10, "local dashboard password credentials", _v10_local_credentials),
+    Migration(11, "tenant-scoped user groups and memberships", _v11_user_groups),
+    Migration(12, "versioned database-backed flow graphs", _v12_graph_definitions),
+    Migration(13, "prefix AI and foundation tables", _v13_prefixed_tables),
+    Migration(14, "PostgreSQL mail sample tables", _v14_mail_tables),
+    Migration(15, "remove empty unprefixed schema version artifact", _v15_remove_unprefixed_version_artifact),
+    Migration(16, "archive source rows that conflict with active PostgreSQL identities", _v16_migration_conflict_archive),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1].version
@@ -351,8 +523,9 @@ def _refuse_if_newer(version: int) -> None:
 
 def _ensure_version_table(conn: "Connection", dialect: "Dialect") -> None:
     types = dialect.type_map()
+    table = CURRENT_VERSION_TABLE if dialect.column_names(conn, CURRENT_VERSION_TABLE) else VERSION_TABLE
     conn.execute(
-        f"CREATE TABLE IF NOT EXISTS {VERSION_TABLE} ("
+        f"CREATE TABLE IF NOT EXISTS {table} ("
         f"  version {types['INTEGER']} PRIMARY KEY,"
         f"  description {types['TEXT']},"
         f"  applied_at {types['REAL']} NOT NULL"
@@ -370,9 +543,10 @@ def current_version(conn: "Connection", dialect: "Dialect") -> int:
     collide on `pg_type` with a duplicate-key error. Creation now happens only
     under the migration lock.
     """
-    if not dialect.column_names(conn, VERSION_TABLE):
+    table = CURRENT_VERSION_TABLE if dialect.column_names(conn, CURRENT_VERSION_TABLE) else VERSION_TABLE
+    if not dialect.column_names(conn, table):
         return 0
-    row = conn.fetchone(f"SELECT COALESCE(MAX(version), 0) AS v FROM {VERSION_TABLE}")
+    row = conn.fetchone(f"SELECT COALESCE(MAX(version), 0) AS v FROM {table}")
     return int(row["v"]) if row else 0
 
 
@@ -408,8 +582,9 @@ def ensure_schema(db: "Database") -> int:
             # at the previous version rather than half-migrated.
             with db.connect() as conn:
                 migration.apply(conn, dialect)
+                version_table = CURRENT_VERSION_TABLE if migration.version >= 13 else VERSION_TABLE
                 conn.execute(
-                    f"INSERT INTO {VERSION_TABLE} (version, description, applied_at) "
+                    f"INSERT INTO {version_table} (version, description, applied_at) "
                     f"VALUES (?,?,?)",
                     (migration.version, migration.description, time.time()),
                 )

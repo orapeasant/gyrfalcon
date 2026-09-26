@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { fetchJSON } from '../lib/api';
+import { CollectionViewToggle, collectionCardStyle, collectionStyle, useCollectionView } from '../components/CollectionViewToggle';
 
 interface PluginInfo {
   name: string;
@@ -13,6 +14,7 @@ interface PluginInfo {
 export function PluginsPage() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useCollectionView('plugins');
 
   useEffect(() => { loadPlugins(); }, []);
 
@@ -34,12 +36,12 @@ export function PluginsPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Plugins</h1>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}><h1 className="text-2xl font-bold">Plugins</h1><CollectionViewToggle view={view} onChange={setView} label="Plugin view" /></div>
 
-      <div className="space-y-3">
+      <div style={collectionStyle(view)}>
         {plugins.length === 0 && <p className="text-gray-500">No plugins installed.</p>}
         {plugins.map(plugin => (
-          <div key={plugin.name} className="border rounded p-4">
+          <div key={plugin.name} className="border rounded p-4" style={collectionCardStyle(view)}>
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-semibold">{plugin.name} <span className="text-xs text-gray-400">v{plugin.version}</span></h3>

@@ -31,15 +31,8 @@ def _backend_params():
         reason="PostgreSQL suite needs GYRFALCON_TEST_PG_DSN set and pg8000 installed"
     )
     return [
-        pytest.param("sqlite", id="sqlite"),
         pytest.param("postgres", id="postgres", marks=() if dsn else (skip,)),
     ]
-
-
-_LEGACY_TABLES = (
-    "flow_runs, flow_run_states, flow_run_edges, flow_events, "
-    "flow_deployments, flow_schema_version"
-)
 
 
 @pytest.fixture(params=_backend_params())
@@ -56,12 +49,6 @@ def raw_db(request, tmp_path):
     """
     open_database = sym("gyrfalcon.db:open_database")
 
-    if request.param == "sqlite":
-        db = open_database(backend="sqlite", path=tmp_path / "flow.db")
-        yield db
-        db.close()
-        return
-
     dsn = postgres_test_dsn()
 
     def _wipe() -> None:
@@ -70,7 +57,13 @@ def raw_db(request, tmp_path):
         cleaner = open_database(backend="postgres", dsn=dsn)
         try:
             with cleaner.connect() as conn:
-                conn.execute(f"DROP TABLE IF EXISTS {_LEGACY_TABLES} CASCADE")
+                from gyrfalcon.db import legacy_schema, schema
+
+                names = {table.name for table in legacy_schema.ALL_TABLES}
+                names.update(table.name for table in schema.ALL_TABLES)
+                names.update(("flow_schema_version", "fnd_flow_schema_version"))
+                for name in names:
+                    conn.execute(f"DROP TABLE IF EXISTS {name} CASCADE")
         finally:
             cleaner.close()
 
@@ -269,8 +262,8 @@ class TestV2ToCurrent:
         migrations = sym("gyrfalcon.db.migrations")
         migrations.ensure_schema(v2)
         with v2.connect() as conn:
-            for table in ("flow_runs", "flow_run_states", "flow_run_edges",
-                          "flow_events", "flow_deployments"):
+            for table in ("fnd_flow_runs", "fnd_flow_run_states", "fnd_flow_run_edges",
+                          "fnd_flow_events", "fnd_flow_deployments"):
                 n = conn.fetchone(f"SELECT COUNT(*) AS c FROM {table}")["c"]
                 assert n == 1, f"{table} lost or gained rows across the upgrade"
 
@@ -279,11 +272,11 @@ class TestV2ToCurrent:
         migrations = sym("gyrfalcon.db.migrations")
         migrations.ensure_schema(v2)
         with v2.connect() as conn:
-            run = conn.fetchone("SELECT * FROM flow_runs WHERE id = ?", ("legacy-run",))
-            event = conn.fetchone("SELECT * FROM flow_events WHERE id = ?", ("evt-1",))
-            dep = conn.fetchone("SELECT * FROM flow_deployments WHERE id = ?", ("dep-1",))
+            run = conn.fetchone("SELECT * FROM fnd_flow_runs WHERE id = ?", ("legacy-run",))
+            event = conn.fetchone("SELECT * FROM fnd_flow_events WHERE id = ?", ("evt-1",))
+            dep = conn.fetchone("SELECT * FROM fnd_flow_deployments WHERE id = ?", ("dep-1",))
             state = conn.fetchone(
-                "SELECT * FROM flow_run_states WHERE run_id = ? AND seq = ?",
+                "SELECT * FROM fnd_flow_run_states WHERE run_id = ? AND seq = ?",
                 ("legacy-run", 1),
             )
         assert run["name"] == "old-flow" and run["state_type"] == "COMPLETED"
@@ -305,8 +298,7 @@ class TestV2ToCurrent:
         ident = sym("gyrfalcon.identity")
 
         v2.close()  # RunStore opens its own handle on the same path/dsn
-        kwargs = {"db_path": v2.path} if v2.dialect.name == "sqlite" else {"dsn": postgres_test_dsn()}
-        store = RunStore(**kwargs, reconcile=False, emit_events=False)
+        store = RunStore(dsn=postgres_test_dsn(), reconcile=False, emit_events=False)
         try:
             with ident.use_principal(ident.Principal(user_id="local", tenant_id="local")):
                 row = store.get_run("legacy-run")
@@ -343,8 +335,8 @@ class TestPartialUpgrades:
         assert migrations.ensure_schema(raw_db) == migrations.SCHEMA_VERSION
 
         with raw_db.connect() as conn:
-            columns = raw_db.dialect.column_names(conn, "flow_runs")
-            row = conn.fetchone("SELECT * FROM flow_runs WHERE id = ?", ("legacy-run",))
+            columns = raw_db.dialect.column_names(conn, "fnd_flow_runs")
+            row = conn.fetchone("SELECT * FROM fnd_flow_runs WHERE id = ?", ("legacy-run",))
         assert "tenant_id" in columns and "user_id" in columns
         assert row["tenant_id"] == "local"
         # v3's own columns must not have been rebuilt or lost in the process.
@@ -357,7 +349,7 @@ class TestPartialUpgrades:
         separate, known-broken "a legacy-shaped table already exists" path
         covered by `TestKnownBug`. The missing tables must be created at the
         current shape, and the pre-existing row must survive untouched."""
-        schema = sym("gyrfalcon.db.schema")
+        schema = sym("gyrfalcon.db.legacy_schema")
         with raw_db.connect() as conn:
             conn.executescript(schema.render((schema.FLOW_RUNS,), raw_db.dialect))
             conn.execute(
@@ -371,11 +363,11 @@ class TestPartialUpgrades:
         assert ensure_schema(raw_db) == SCHEMA_VERSION
 
         with raw_db.connect() as conn:
-            for table in ("flow_runs", "flow_run_states", "flow_run_edges",
-                          "flow_events", "flow_deployments"):
+            for table in ("fnd_flow_runs", "fnd_flow_run_states", "fnd_flow_run_edges",
+                          "fnd_flow_events", "fnd_flow_deployments"):
                 assert raw_db.dialect.column_names(conn, table), f"{table} was not created"
-            run = conn.fetchone("SELECT * FROM flow_runs WHERE id = ?", ("solo",))
-            events_cols = raw_db.dialect.column_names(conn, "flow_events")
+            run = conn.fetchone("SELECT * FROM fnd_flow_runs WHERE id = ?", ("solo",))
+            events_cols = raw_db.dialect.column_names(conn, "fnd_flow_events")
         assert run["tenant_id"] == "acme", "a real (non-backfilled) tenant must survive untouched"
         assert "tenant_id" in events_cols, "a freshly created table must already be current-shaped"
 
@@ -388,7 +380,7 @@ class TestRefusesNewerSchemas:
 
         with raw_db.connect() as conn:
             conn.execute(
-                f"INSERT INTO {migrations.VERSION_TABLE} (version, description, applied_at) "
+                f"INSERT INTO {migrations.CURRENT_VERSION_TABLE} (version, description, applied_at) "
                 f"VALUES (?, ?, ?)",
                 (migrations.SCHEMA_VERSION + 1, "from the future", 0.0),
             )

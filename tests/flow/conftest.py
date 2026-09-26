@@ -76,10 +76,7 @@ def clock() -> FakeClock:
 
 # ── Backend parameterization (§15.9) ──────────────────────────────────────────
 #
-# The store suite runs against every configured backend. SQLite always runs and
-# needs nothing. PostgreSQL runs only when GYRFALCON_TEST_PG_DSN is set and
-# pg8000 is installed — otherwise those parameters skip with a message saying
-# how to enable them, rather than silently reporting green on half the matrix.
+# Database tests require an explicitly configured, disposable PostgreSQL DB.
 #
 #   GYRFALCON_TEST_PG_DSN=postgresql://user:pass@host:5432/db uv run pytest
 
@@ -94,13 +91,21 @@ def postgres_test_dsn() -> str | None:
     return dsn
 
 
+def pytest_collection_modifyitems(items):
+    if postgres_test_dsn():
+        return
+    marker = pytest.mark.skip(reason="Flow integration suite requires a disposable GYRFALCON_TEST_PG_DSN")
+    for item in items:
+        if "/tests/flow/" in str(item.path):
+            item.add_marker(marker)
+
+
 def _backend_params():
     dsn = postgres_test_dsn()
     skip = pytest.mark.skip(
         reason="PostgreSQL suite needs GYRFALCON_TEST_PG_DSN set and pg8000 installed"
     )
     return [
-        pytest.param("sqlite", id="sqlite"),
         pytest.param("postgres", id="postgres", marks=() if dsn else (skip,)),
     ]
 
@@ -109,14 +114,9 @@ def _backend_params():
 def store_target(request, tmp_path) -> dict:
     """Constructor kwargs pinning a store to the parameterized backend.
 
-    SQLite gets a fresh file per test from `tmp_path`. PostgreSQL has no such
-    per-test isolation — one database is shared — so the flow tables are
-    truncated on entry. Truncating rather than dropping keeps the schema (and
-    any migration state) intact between tests.
+    The dedicated PostgreSQL test DB is truncated on entry. Never point
+    GYRFALCON_TEST_PG_DSN at a production database.
     """
-    if request.param == "sqlite":
-        return {"db_path": tmp_path / "flow.db"}
-
     dsn = postgres_test_dsn()
     from gyrfalcon.db import open_database
     from gyrfalcon.db import schema as sch

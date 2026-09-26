@@ -148,9 +148,8 @@ class DeploymentStore:
         losers see rowcount 0 and skip.
 
         Chosen over §15.6.2's suggested `FOR UPDATE SKIP LOCKED` because it is
-        one statement that behaves identically on both backends, needs no
-        dialect branch, and is therefore testable on SQLite instead of only
-        under PostgreSQL. Advancing the schedule *is* the claim, so a
+        one statement that behaves identically across PostgreSQL versions and
+        needs no lock syntax. Advancing the schedule *is* the claim, so a
         deployment can no longer be advanced twice for one due slot either.
         """
         from gyrfalcon.scheduler import next_run_iso

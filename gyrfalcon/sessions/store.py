@@ -2,15 +2,8 @@
 
 Spec: §19.7.
 
-Why this exists beside `gyrfalcon_state.py` rather than replacing it outright:
-
-* **CLIENT mode keeps its local SQLite file.** `db/__init__.py` already forces
-  SQLite in CLIENT mode, so a single-user install gains tenancy columns it
-  never has to think about, and nothing about a laptop install needs a server.
-* **`session_usage` is the new capability.** The previous store kept only
-  running session totals (`SET x = x + ?`), so "where did the money go in this
-  session" was not merely unqueried — it was never written down. One row per
-  LLM call is what makes per-call cost history, and the §19.9 replay, possible.
+Session history, messages, and per-call token usage share PostgreSQL storage.
+One usage row per LLM call supports cost history and replay.
 
 Three rules from `CLAUDE.md` hold this together and are easy to break:
 statements live in `db/sql.py`, every read is a builder taking a `Scope`, and
@@ -87,7 +80,7 @@ class SessionStore:
             conn.execute(sql.insert_session(), (
                 session_id, source, agent_id, model, parent_session_id, title,
                 system_prompt, now, None, now,
-                0, 0, 0, 0, 0, 0.0, user_id, tenant_id,
+                0, 0, 0, 0, 0, 0.0, user_id, tenant_id, user_id,
             ))
         return session_id
 
@@ -125,10 +118,8 @@ class SessionStore:
                        scope: Optional[Scope] = None) -> None:
         """Delete a session and everything hanging off it.
 
-        The children are removed explicitly rather than by `ON DELETE CASCADE`:
-        SQLite enforces foreign keys only when `PRAGMA foreign_keys` is on, so
-        relying on the declaration would silently leave orphaned message rows —
-        which is to say, leave the conversation text behind after a delete.
+        The children are removed explicitly so every relationship is clear
+        and the operation is atomic.
         """
         scope = scope or current_scope()
         get, get_params = sql.get_session(scope)
@@ -136,20 +127,20 @@ class SessionStore:
         with self._db.connect() as conn:
             if not conn.fetchone(get, (*get_params, session_id)):
                 return                       # not visible: not ours to delete
-            conn.execute("DELETE FROM session_messages WHERE session_id = ?",
-                         (session_id,))
-            conn.execute("DELETE FROM session_usage WHERE session_id = ?",
-                         (session_id,))
+            conn.execute(sql.DELETE_SESSION_MESSAGES, (session_id,))
+            conn.execute(sql.DELETE_SESSION_USAGE, (session_id,))
+            conn.execute(sql.DELETE_SESSION_ROUTES, (session_id,))
+            conn.execute(sql.DELETE_SESSION_CONTEXTS, (session_id,))
+            conn.execute(sql.DELETE_SESSION_PROMPT_SNAPSHOTS, (session_id,))
+            conn.execute(sql.DELETE_SESSION_PARTICIPANTS, (session_id,))
             conn.execute(statement, (*params, session_id))
 
     def ensure_session(self, session_id: str, model: str = "",
                        source: str = "", scope: Optional[Scope] = None) -> bool:
         """Create the session row if it is not already there.
 
-        Usage rows are recorded from the agent loop, which may be driving a
-        conversation whose `sessions` row lives in the legacy SQLite store.
-        Without this, per-call usage would accumulate against a session id
-        that has no row here, and every later join would drop it.
+        Usage rows can be recorded when the caller has an existing
+        conversation id that has not yet been persisted in this database.
 
         Returns True if a row was created.
         """
@@ -184,6 +175,8 @@ class SessionStore:
                 tool_calls, tool_name, reasoning, time.time(),
                 user_id, tenant_id,
             ))
+            touch, touch_params = sql.touch_session(scope)
+            conn.execute(touch, (time.time(), *touch_params, session_id))
         return message_id
 
     def get_messages(self, session_id: str,
@@ -200,13 +193,11 @@ class SessionStore:
                         scope: Optional[Scope] = None) -> list[dict]:
         """Full-text search across message content.
 
-        Uses whichever index the backend has (FTS5, `tsvector`, or none), so
-        the same call works on SQLite and PostgreSQL and degrades to `LIKE`
-        rather than returning an empty list on a backend without either.
+        Uses PostgreSQL full text search over message content.
         """
         scope = scope or current_scope()
         dialect = self.dialect
-        match = dialect.fulltext_match("session_messages", "content")
+        match = dialect.fulltext_match("m", "content")
         statement, params = sql.search_messages(scope, match)
         term = dialect.fulltext_term(query)
         try:
@@ -286,6 +277,23 @@ class SessionStore:
         with self._db.connect() as conn:
             rows = conn.fetchall(statement, (*params, since))
         return [dict(r) for r in rows]
+
+    def tokenomics_report(
+        self,
+        start_at: float,
+        end_at: float,
+        grain: str = "day",
+        dimension: str = "none",
+        pivot: str = "none",
+        scope: Optional[Scope] = None,
+    ) -> list[dict]:
+        """Read scoped, aggregated per-call usage for the Tokenomics report."""
+        scope = scope or current_scope()
+        period = self.dialect.date_bucket(grain, "u.created_at")
+        statement, params = sql.tokenomics_report(scope, period, dimension, pivot)
+        with self._db.connect() as conn:
+            rows = conn.fetchall(statement, (*params, start_at, end_at))
+        return [dict(row) for row in rows]
 
 
 _store: Optional[SessionStore] = None

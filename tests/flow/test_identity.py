@@ -123,9 +123,9 @@ class TestPropagation:
         principal must ride along with no further work."""
         ident = sym("gyrfalcon.identity")
         flow = sym("gyrfalcon.flow:flow")
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def who() -> str:
             p = ident.get_principal()
             return p.user_id if p else "<lost>"
@@ -189,9 +189,9 @@ class TestOwnershipInheritance:
 
     def test_a_submitted_tasks_persisted_row_is_owned_by_the_flows_starter(self, store):
         flow = sym("gyrfalcon.flow:flow")
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def child(i):
             return i
 

@@ -21,9 +21,9 @@ pytestmark = requires("gyrfalcon.flow:flow", section="§3, §4")
 class TestRegressions:
     def test_map_over_a_generator_is_not_consumed_twice(self):
         """Regression: measuring length re-listed the argument, exhausting it."""
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def double(x):
             return x * 2
 
@@ -39,10 +39,10 @@ class TestRegressions:
 
     def test_distributed_future_polls_rather_than_snapshotting(self):
         """Regression: rehydrating right after submit reported Pending forever."""
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         future_from_id = sym("gyrfalcon.flow.futures:future_from_id")
 
-        @task
+        @activity
         def slow(x):
             time.sleep(0.02)
             return x + 1
@@ -117,9 +117,9 @@ class TestPolicyIntegration:
 class TestComposition:
     def test_flow_calling_a_failing_task_fails_rather_than_crashes(self):
         flow = sym("gyrfalcon.flow:flow")
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def bad():
             raise ValueError("inner boom")
 
@@ -132,12 +132,12 @@ class TestComposition:
         assert isinstance(state.exception, ValueError)
 
     def test_original_exception_type_survives_result(self):
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
         class Custom(Exception):
             ...
 
-        @task
+        @activity
         def raiser():
             raise Custom("specific")
 
@@ -161,11 +161,11 @@ class TestComposition:
 
     def test_rollbacks_run_in_reverse_order(self):
         """Most recent effect is undone first."""
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         transaction = sym("gyrfalcon.flow.transactions:transaction")
         order: list[str] = []
 
-        @task
+        @activity
         def one():
             order.append("one")
 
@@ -173,7 +173,7 @@ class TestComposition:
         def _r1(txn):
             order.append("rollback-one")
 
-        @task
+        @activity
         def two():
             order.append("two")
 
@@ -181,7 +181,7 @@ class TestComposition:
         def _r2(txn):
             order.append("rollback-two")
 
-        @task
+        @activity
         def boom():
             raise RuntimeError("die")
 
@@ -194,9 +194,9 @@ class TestComposition:
         assert order == ["one", "two", "rollback-two", "rollback-one"]
 
     def test_parallel_submissions_do_not_cross_talk(self):
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
 
-        @task
+        @activity
         def add(a, b):
             return a + b
 
@@ -218,13 +218,13 @@ class TestComposition:
 
     def test_a_raising_retry_predicate_does_not_decide_the_run(self):
         """A broken predicate defaults to retrying rather than failing fast."""
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         attempts = {"n": 0}
 
         def broken(t, engine, state):
             raise ValueError("predicate exploded")
 
-        @task(retries=2, retry_condition_fn=broken)
+        @activity(retries=2, retry_condition_fn=broken)
         def t2():
             attempts["n"] += 1
             raise RuntimeError("boom")

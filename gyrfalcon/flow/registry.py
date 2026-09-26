@@ -5,7 +5,7 @@ index of the ones that have been imported, so the API and UI have something to
 list without a separate authoring format.
 
 `discover_flows()` is how a file becomes known to a process that didn't write
-it inline: drop a `.py` file in `~/.gyrfalcon/flows/` and any `@flow`/`@task`
+it inline: drop a `.py` file in `~/.gyrfalcon/flows/` and any `@flow`/`@activity`
 in it registers itself on import — no manifest, no `register()` call, mirroring
 `get_skills_dir()` exactly. This is deliberately **not** the plugin system
 (`gyrfalcon/plugins.py`): plugins register new capabilities *with* the agent
@@ -24,11 +24,12 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
-from gyrfalcon.flow.templates import Flow
+from gyrfalcon.flow.templates import Activity, Flow
 
 logger = logging.getLogger("gyrfalcon.flow.registry")
 
 _REGISTRY: dict[str, Flow] = {}
+_ACTIVITIES: dict[tuple[str, str], Activity] = {}
 _LOCK = threading.Lock()
 
 #: Files that failed to import on the last `discover_flows()`, keyed by
@@ -41,6 +42,26 @@ _IMPORT_ERRORS: dict[str, str] = {}
 def register(template: Flow) -> None:
     with _LOCK:
         _REGISTRY[template.name] = template
+
+
+def register_activity(template: Activity) -> None:
+    if template.version is None:
+        return
+    with _LOCK:
+        _ACTIVITIES[(template.name, template.version)] = template
+
+
+def get_activity(name: str, version: str) -> Activity | None:
+    with _LOCK:
+        return _ACTIVITIES.get((name, version))
+
+
+def list_activities() -> list[dict[str, str]]:
+    with _LOCK:
+        return [
+            {"name": name, "version": version}
+            for name, version in sorted(_ACTIVITIES)
+        ]
 
 
 def get_definition(name: str) -> Flow | None:

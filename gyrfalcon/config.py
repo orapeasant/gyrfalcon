@@ -83,17 +83,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "scopes": ["openid", "profile", "email"],
         },
     },
-    # Flow run/event/deployment persistence (spec 15-flow.md §15.7).
-    # Governs the flow stores only — session history stays on SQLite via
-    # gyrfalcon_state.SessionDB regardless of what is set here (§15.12).
+    # Shared PostgreSQL persistence for flows, identity, and sessions.
     "flow": {
         "store": {
-            "backend": "sqlite",          # sqlite | postgres
-            # sqlite only. Empty means <GYRFALCON_HOME>/flow.db, resolved through
-            # get_gyrfalcon_home() so profiles stay isolated — a literal
-            # "~/.gyrfalcon/flow.db" default here would break that.
-            "path": "",
-            "dsn": "",                    # postgres only
+            "backend": "postgres",
+            "dsn": "",
             "pool_min_size": 1,
             "pool_max_size": 10,
             "statement_timeout_ms": 30000,

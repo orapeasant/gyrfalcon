@@ -63,6 +63,17 @@ class PostgresDialect(Dialect):
         """`plainto_tsquery` already treats its input as plain words."""
         return query
 
+    def date_bucket(self, grain: str, expression: str) -> str:
+        if grain not in {"day", "week", "month", "quarter"}:
+            raise ValueError(f"unsupported date grain: {grain}")
+        if grain == "day":
+            return f"to_char(to_timestamp({expression}) AT TIME ZONE 'UTC', 'YYYY-MM-DD')"
+        fmt = "IYYY-\"W\"IW" if grain == "week" else "YYYY-MM" if grain == "month" else "YYYY-\"Q\"Q"
+        return (
+            f"to_char(date_trunc('{grain}', to_timestamp({expression}) "
+            f"AT TIME ZONE 'UTC'), '{fmt}')"
+        )
+
 
     def __init__(self, statement_timeout_ms: int = 30000):
         self.statement_timeout_ms = statement_timeout_ms

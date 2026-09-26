@@ -15,6 +15,7 @@ import {
   AlertTriangle, RefreshCw, X,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { CollectionViewToggle, collectionCardStyle, collectionStyle, useCollectionView } from "../components/CollectionViewToggle";
 
 interface FlowDeployment {
   id: string;
@@ -74,6 +75,7 @@ export function FlowDeploymentsPage() {
   const [formTarget, setFormTarget] = useState<"create" | FlowDeployment | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<{ dep: string; runId: string } | null>(null);
+  const [view, setView] = useCollectionView("flow-deployments");
 
   const load = async () => {
     setLoading(true);
@@ -133,6 +135,7 @@ export function FlowDeploymentsPage() {
       <div style={S.head}>
         <h1 style={S.h1}>Deployments</h1>
         <span style={{ fontSize: "12px", color: "var(--fg-muted)" }}>{deployments.length}</span>
+        <CollectionViewToggle view={view} onChange={setView} label="Deployment view" />
         <button style={S.refreshBtn} onClick={load}><RefreshCw size={12} /> Refresh</button>
         <button style={S.addBtn} onClick={() => setFormTarget("create")}><Plus size={13} /> New</button>
       </div>
@@ -162,8 +165,8 @@ export function FlowDeploymentsPage() {
       ) : deployments.length === 0 ? (
         <div style={S.empty}>No deployments yet. Create one to run a flow on a schedule.</div>
       ) : (
-        deployments.map((d) => (
-          <div key={d.id} style={S.card}>
+        <div style={collectionStyle(view)}>{deployments.map((d) => (
+          <div key={d.id} style={{ ...S.card, ...collectionCardStyle(view) }}>
             <div style={S.row}>
               <CalendarClock size={15} style={{ color: "var(--fg-muted)" }} />
               <span style={S.name}>{d.name}</span>
@@ -199,7 +202,7 @@ export function FlowDeploymentsPage() {
               {d.concurrency_limit != null && <span>Concurrency limit: {d.concurrency_limit}</span>}
             </div>
           </div>
-        ))
+        ))}</div>
       )}
 
       {formTarget && (

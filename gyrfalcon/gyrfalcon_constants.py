@@ -50,9 +50,7 @@ def get_run_mode() -> str:
     `.env`) collapsed onto the one place everything downstream — DB backend
     selection today, more later — actually reads from.
 
-    Defaults to "CLIENT" (SQLite-only, single-user) on an unset or invalid
-    value, since that is the historical, zero-configuration behavior this
-    flag must not change for anyone who never sets it.
+    Defaults to "CLIENT" (single-user) on an unset or invalid value.
     """
     raw = os.environ.get("RUN_MODE", "").strip().upper()
     if raw in RUN_MODES:

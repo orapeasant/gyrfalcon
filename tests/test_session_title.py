@@ -6,6 +6,7 @@ daemon thread, and had no fallback when the summarizing call failed.
 """
 
 from unittest.mock import MagicMock, patch
+import os
 
 import pytest
 
@@ -14,8 +15,11 @@ from gyrfalcon.run_agent import AIAgent, _clean_title, derive_fallback_title
 
 
 @pytest.fixture()
-def db(tmp_path):
-    d = SessionDB(tmp_path / "sessions.db")
+def db():
+    dsn = os.environ.get("GYRFALCON_TEST_PG_DSN")
+    if not dsn:
+        pytest.skip("Disposable PostgreSQL test DSN required")
+    d = SessionDB(dsn=dsn)
     yield d
     d.close()
 

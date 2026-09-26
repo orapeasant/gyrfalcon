@@ -99,7 +99,7 @@ class _BaseRunEngine:
 
     def __init__(self, template: Any, parameters: Optional[dict] = None,
                  client: Any = None, run_id: Optional[str] = None,
-                 persist: Optional[bool] = None):
+                 persist: Optional[bool] = None, store: Any = None):
         # `persist` is a class attribute below, which makes it a process-wide
         # switch — fine for one tenant, a shared mutable global for many
         # (§17.8). Setting it here shadows the class value for this engine
@@ -109,6 +109,7 @@ class _BaseRunEngine:
         self.template = template
         self.parameters = parameters or {}
         self.client = client
+        self._explicit_store = store
         # A caller may pre-assign the id when it had to create the run row
         # first — the runner reserves a concurrency slot that way (§15.6.3).
         # `create_run` is insert-or-ignore, so adopting the id is a no-op
@@ -129,6 +130,8 @@ class _BaseRunEngine:
     persist: bool = False
 
     def _store(self):
+        if self._explicit_store is not None:
+            return self._explicit_store
         if not self.persist:
             return None
         from gyrfalcon.flow.store import get_store

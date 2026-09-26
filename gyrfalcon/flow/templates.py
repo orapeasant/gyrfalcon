@@ -1,4 +1,4 @@
-"""Templates — `Flow` and `Task`.
+"""Templates — `Flow` and `Activity`.
 
 Spec: §1.1–1.2.
 
@@ -158,8 +158,14 @@ class Flow(_Template):
         return FlowRunEngine
 
 
-class Task(_Template):
+class Activity(_Template):
     is_task = True
+    is_activity = True
+
+    def __init__(self, fn: Callable, **options: Any):
+        super().__init__(fn, **options)
+        from gyrfalcon.flow.registry import register_activity
+        register_activity(self)
 
     @property
     def engine_cls(self):  # type: ignore[override]
@@ -189,4 +195,10 @@ def _decorator(cls: type[_Template]):
 
 
 flow = _decorator(Flow)
-task = _decorator(Task)
+activity = _decorator(Activity)
+
+# Backward compatibility for Python-authored flows. New flow definitions and
+# the visual builder use `@activity`; persisted run records and engine classes
+# retain the historic task-run terminology.
+Task = Activity
+task = activity

@@ -80,7 +80,7 @@ class TestTaskPermits:
 
     def test_permits_are_released_when_tasks_finish(self, multi_tenant, monkeypatch):
         futures = sym("gyrfalcon.flow.futures")
-        task = sym("gyrfalcon.flow:task")
+        activity = sym("gyrfalcon.flow:activity")
         flow = sym("gyrfalcon.flow:flow")
         import gyrfalcon.config as cfg
         monkeypatch.setattr(
@@ -90,7 +90,7 @@ class TestTaskPermits:
         runner = futures.ThreadPoolTaskRunner(max_workers=4)
         monkeypatch.setattr(futures, "_DEFAULT_RUNNER", runner)
 
-        @task
+        @activity
         def quick(x):
             time.sleep(0.01)
             return x

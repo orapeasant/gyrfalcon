@@ -10,8 +10,7 @@ reads from here.
 
 Storage is reached through `db/` (§15): this module owns *what a
 transition means* and nothing about how rows are written. The SQL it runs
-lives in `db/sql.py`, so the same statements serve SQLite and PostgreSQL
-without a second copy to keep in step.
+lives in `db/sql.py`, so statements stay out of the store implementation.
 """
 
 from __future__ import annotations
@@ -572,6 +571,8 @@ class RunStore:
             "is_final": row["state_type"] in (t.value for t in st.TERMINAL_STATES),
             "user_id": row["user_id"],
             "tenant_id": row["tenant_id"],
+            "definition_id": row["definition_id"],
+            "definition_version": row["definition_version"],
         }
 
     @property

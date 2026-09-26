@@ -31,11 +31,13 @@ PAGES: tuple[tuple[str, str, str, str], ...] = (
     ("chat", "/chat", "Chat", "MessageSquare"),
     ("sessions", "/sessions", "Sessions", "History"),
     ("analytics", "/analytics", "Analytics", "BarChart2"),
-    ("tokenomics", "/tokenomics", "Tokenomics", "Calculator"),
+    ("tokenomics.report", "/tokenomics/report", "Report", "BarChart2"),
+    ("tokenomics.estimation", "/tokenomics/estimate", "Estimation", "Calculator"),
     ("applications.manage", "/applications/manage", "Applications", "AppWindow"),
     ("flow.instances", "/flows/instances", "Instances", "Play"),
     ("flow.tasks", "/flows/tasks", "My Tasks", "Inbox"),
     ("flow.definitions", "/flows/definitions", "Definitions", "FileCode"),
+    ("flow.designer", "/flows/designer", "Designer", "Workflow"),
     ("flow.deployments", "/flows/deployments", "Deployments", "CalendarClock"),
     ("flow.events", "/flows/events", "Events", "Radio"),
     ("ai.models", "/models", "Models", "Cpu"),
@@ -43,6 +45,8 @@ PAGES: tuple[tuple[str, str, str, str], ...] = (
     ("ai.agents", "/agents", "Agents", "Users"),
     ("ai.skills", "/skills", "Skills", "BookOpen"),
     ("ai.plugins", "/plugins", "Plugins", "Puzzle"),
+    ("ai.routing", "/routing", "Routing", "Workflow"),
+    ("ai.guardrail", "/guardrail", "Guardrail", "ShieldCheck"),
     ("admin.scheduler", "/scheduler", "Scheduler", "Clock"),
     ("admin.profiles", "/profiles", "Profiles", "Users"),
     ("admin.config", "/config", "Configurations", "Settings"),
@@ -50,6 +54,8 @@ PAGES: tuple[tuple[str, str, str, str], ...] = (
     ("security.service_accounts", "/security/service-accounts",
      "Service Accounts", "KeyRound"),
     ("security.secrets", "/security/secrets", "Secret Store", "Lock"),
+    ("security.users", "/security/users", "Users & Groups", "UsersRound"),
+    ("security.roles", "/security/roles", "Roles", "ShieldCheck"),
 )
 
 # ── Shared sub-menus ─────────────────────────────────────────────────────────
@@ -61,12 +67,16 @@ PAGES: tuple[tuple[str, str, str, str], ...] = (
 SUBMENUS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
     # (name, icon, page keys, branch menu names)
     ("Flow", "Workflow",
-     ("flow.instances", "flow.tasks", "flow.definitions",
+     ("flow.instances", "flow.tasks", "flow.definitions", "flow.designer",
       "flow.deployments", "flow.events"), ()),
+    ("Tokenomics", "Calculator",
+     ("tokenomics.report", "tokenomics.estimation"), ()),
     ("AI Engine", "Zap",
-     ("ai.models", "ai.mcp", "ai.agents", "ai.skills", "ai.plugins"), ()),
+     ("ai.models", "ai.mcp", "ai.agents", "ai.skills", "ai.plugins",
+      "ai.routing", "ai.guardrail"), ()),
     ("Security", "ShieldCheck",
-     ("security.service_accounts", "security.secrets"), ()),
+     ("security.service_accounts", "security.secrets", "security.users",
+      "security.roles"), ()),
     ("Administration", "Wrench",
      ("admin.scheduler", "admin.profiles", "admin.config", "admin.logs"),
      ("Security",)),
@@ -76,9 +86,9 @@ SUBMENUS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
 
 ROLE_MENUS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
     ("App Developer Menu", "Zap",
-     ("chat", "sessions", "analytics", "tokenomics", "applications.manage"),
-     ("Flow", "AI Engine")),
-    ("System Admin Menu", "Wrench", (), ("Administration",)),
+     ("chat", "sessions", "analytics", "applications.manage"),
+     ("Flow", "Tokenomics", "AI Engine")),
+    ("System Admin Menu", "Wrench", ("flow.designer",), ("Administration",)),
     # `identity.LOCAL` carries roles={"operator"}, so a single-user install
     # must resolve to the full sidebar it already had. This menu branches to
     # both of the above rather than repeating their items (§11.6).
