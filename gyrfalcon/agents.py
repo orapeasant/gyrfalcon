@@ -11,6 +11,7 @@ module so the two paths can't drift apart again.
 """
 
 import json
+import hashlib
 from typing import Any, Optional
 
 
@@ -29,6 +30,17 @@ def load_agents() -> list[dict]:
 
 def get_agent(agent_id: str) -> Optional[dict]:
     return next((a for a in load_agents() if a["id"] == agent_id), None)
+
+
+def agent_config_version(agent_cfg: dict) -> str:
+    """Stable version of the executable agent configuration for flow pins."""
+    fields = (
+        "id", "instructions", "model", "provider", "max_iterations",
+        "mcp_servers", "skills", "enabled_toolsets", "plugins",
+    )
+    payload = {field: agent_cfg.get(field) for field in fields}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def build_full_instructions(agent_cfg: dict) -> str:

@@ -4,7 +4,7 @@
  * model override, and an optional gateway endpoint.
  */
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import {
   Plus, Trash2, X, Play, RefreshCw, Copy, Eye, EyeOff,
@@ -369,6 +369,7 @@ function agentToForm(a: Agent): FormState {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export function AgentsPage() {
+  const [searchParams] = useSearchParams();
   const [agents, setAgents]           = useState<Agent[]>([]);
   const [loading, setLoading]         = useState(true);
   const [selected, setSelected]       = useState<Agent | null>(null);
@@ -396,6 +397,12 @@ export function AgentsPage() {
   }, [agentLayout]);
 
   useEffect(() => { load(); loadOptions(); }, []);
+
+  useEffect(() => {
+    const agentId = searchParams.get("id");
+    const agent = agentId ? agents.find((item) => item.id === agentId) : undefined;
+    if (agent && selected?.id !== agent.id) selectAgent(agent);
+  }, [agents, searchParams]);
 
   async function load(keepId?: string) {
     setLoading(true);

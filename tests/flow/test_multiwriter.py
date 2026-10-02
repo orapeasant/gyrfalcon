@@ -1,14 +1,12 @@
 """Multi-writer correctness — §15.6, delivered by §15.11 step 6.
 
-Three behaviours were correct only because SQLite implied exactly one process.
-Each is tested here with two independent stores against one database, which is
+Three behaviours require multiple concurrent writers. Each is tested here
+with two independent stores against one database, which is
 the smallest arrangement that can reproduce the bug at all: a single store
 cannot race itself.
 
-Runs against every configured backend (see conftest.store_target). The fixes
-are deliberately backend-neutral — a compare-and-swap claim rather than
-`FOR UPDATE SKIP LOCKED` — so these assertions are meaningful on SQLite too,
-not skipped until someone remembers to point them at PostgreSQL.
+Runs against the configured PostgreSQL database (see conftest.store_target).
+Claims use compare-and-swap updates for concurrency safety.
 """
 
 from __future__ import annotations

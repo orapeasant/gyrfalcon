@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import inspect
+import re
 import sys
 import threading
 from pathlib import Path
@@ -56,12 +58,25 @@ def get_activity(name: str, version: str) -> Activity | None:
         return _ACTIVITIES.get((name, version))
 
 
-def list_activities() -> list[dict[str, str]]:
+def list_activities() -> list[dict[str, Any]]:
+    from gyrfalcon.gyrfalcon_constants import get_flows_dir
+
+    editable_dir = get_flows_dir().resolve()
     with _LOCK:
-        return [
-            {"name": name, "version": version}
-            for name, version in sorted(_ACTIVITIES)
-        ]
+        templates = [(name, version, _ACTIVITIES[(name, version)])
+                     for name, version in sorted(_ACTIVITIES)]
+    result = []
+    for name, version, template in templates:
+        source = inspect.getsourcefile(template.fn)
+        source_path = Path(source).resolve() if source else None
+        result.append({
+            "name": name,
+            "version": version,
+            "module": source_path.stem if source_path else None,
+            "description": (template.description or "").strip(),
+            "editable": bool(source_path and source_path.parent == editable_dir),
+        })
+    return result
 
 
 def get_definition(name: str) -> Flow | None:
@@ -149,6 +164,64 @@ def get_import_errors() -> dict[str, str]:
     """Filename → error, from the most recent `discover_flows()`."""
     with _LOCK:
         return dict(_IMPORT_ERRORS)
+
+
+def list_activity_modules() -> list[str]:
+    """List editable Python modules in the profile's flows directory."""
+    from gyrfalcon.gyrfalcon_constants import get_flows_dir
+
+    return sorted(path.stem for path in get_flows_dir().glob("*.py")
+                  if not path.name.startswith("_") and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", path.stem))
+
+
+def get_activity_module(name: str) -> str:
+    from gyrfalcon.gyrfalcon_constants import get_flows_dir
+
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
+        raise ValueError("Module name must use letters, numbers, and underscores.")
+    path = get_flows_dir() / f"{name}.py"
+    if not path.is_file():
+        raise ValueError(f"Module {name!r} does not exist.")
+    return path.read_text(encoding="utf-8")
+
+
+def save_activity_module(name: str, content: str) -> None:
+    """Write a user activity module and restore disk and registry on import failure."""
+    from gyrfalcon.gyrfalcon_constants import get_flows_dir
+
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
+        raise ValueError("Module name must use letters, numbers, and underscores.")
+    if not content.strip():
+        raise ValueError("Python source cannot be empty.")
+    path = get_flows_dir() / f"{name}.py"
+    compile(content, str(path), "exec")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    previous = path.read_text(encoding="utf-8") if path.exists() else None
+    with _LOCK:
+        old_flows = dict(_REGISTRY)
+        old_activities = dict(_ACTIVITIES)
+        for key, template in list(_REGISTRY.items()):
+            source = inspect.getsourcefile(template.fn)
+            if source and Path(source).resolve() == path.resolve():
+                _REGISTRY.pop(key, None)
+        for key, template in list(_ACTIVITIES.items()):
+            source = inspect.getsourcefile(template.fn)
+            if source and Path(source).resolve() == path.resolve():
+                _ACTIVITIES.pop(key, None)
+    path.write_text(content, encoding="utf-8")
+    try:
+        _import_single_file(path)
+    except Exception as exc:
+        if previous is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(previous, encoding="utf-8")
+        with _LOCK:
+            _REGISTRY.clear()
+            _REGISTRY.update(old_flows)
+            _ACTIVITIES.clear()
+            _ACTIVITIES.update(old_activities)
+        raise ValueError(f"Could not import {name}.py: {exc}") from exc
 
 
 # ══════════════════════════════════════════════════════════════════════════

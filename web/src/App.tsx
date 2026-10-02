@@ -9,7 +9,7 @@ import {
   ChevronDown, ChevronRight, Zap, Wrench, Home,
   PanelLeftClose, PanelLeftOpen, AppWindow, Sun, Moon,
   LogOut,
-  Workflow, Play, FileCode, Inbox, CalendarClock, Radio,
+  Workflow, Play, Inbox, CalendarClock, Radio,
   ShieldCheck, KeyRound, Lock,
   UsersRound,
 } from "lucide-react";
@@ -32,7 +32,6 @@ import { AgentsPage }    from "./pages/AgentsPage";
 import { ApplicationsManagePage } from "./pages/ApplicationsManagePage";
 import { ApplicationDetailPage }  from "./pages/ApplicationDetailPage";
 import { FlowInstancesPage }   from "./pages/FlowInstancesPage";
-import { FlowDefinitionsPage } from "./pages/FlowDefinitionsPage";
 import { FlowDesignerPage } from "./pages/FlowDesignerPage";
 import { FlowTasksPage }       from "./pages/FlowTasksPage";
 import { FlowDeploymentsPage } from "./pages/FlowDeploymentsPage";
@@ -73,7 +72,6 @@ const NAV: NavDef[] = [
     items: [
       { type: "item", path: "/flows/instances",   label: "Instances",   icon: Play },
       { type: "item", path: "/flows/tasks",       label: "My Tasks",    icon: Inbox },
-      { type: "item", path: "/flows/definitions", label: "Definitions", icon: FileCode },
       { type: "item", path: "/flows/designer",    label: "Designer",    icon: Workflow },
       { type: "item", path: "/flows/deployments", label: "Deployments", icon: CalendarClock },
       { type: "item", path: "/flows/events",      label: "Events",      icon: Radio },
@@ -365,6 +363,7 @@ function Breadcrumb() {
           </span>
         </React.Fragment>
       ))}
+      <span id="flow-breadcrumb-tail" />
     </div>
   );
 }
@@ -527,8 +526,8 @@ function DashboardApp({ username, onLogout }: { username: string; onLogout: () =
   useEffect(() => {
     let cancelled = false;
     const poll = () => {
-      api.getFlowTasks()
-        .then((d) => { if (!cancelled) setPendingTaskCount((d.tasks || []).length); })
+      api.getFlowInbox()
+        .then((d) => { if (!cancelled) setPendingTaskCount((d.notifications || []).length); })
         .catch(() => {});
     };
     poll();
@@ -686,6 +685,7 @@ function DashboardApp({ username, onLogout }: { username: string; onLogout: () =
       <div style={S.main}>
         <header style={S.topbar}>
           <Breadcrumb />
+          <div id="flow-breadcrumb-actions" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5 }} />
         </header>
         <div style={S.content}>
           <Routes>
@@ -706,7 +706,7 @@ function DashboardApp({ username, onLogout }: { username: string; onLogout: () =
             <Route path="/flows"             element={<Navigate to="/flows/instances" replace />} />
             <Route path="/flows/instances"   element={<ScrollPage><FlowInstancesPage /></ScrollPage>} />
             <Route path="/flows/tasks"       element={<ScrollPage><FlowTasksPage /></ScrollPage>} />
-            <Route path="/flows/definitions" element={<ScrollPage><FlowDefinitionsPage /></ScrollPage>} />
+            <Route path="/flows/definitions" element={<Navigate to="/flows/designer" replace />} />
             <Route path="/flows/designer"    element={<ScrollPage>{roles === null
               ? <div style={{ padding: 16 }}>Checking access…</div>
               : canDesignFlows ? <FlowDesignerPage /> : <div style={{ padding: 16 }}>Administrator or developer role required.</div>}</ScrollPage>} />

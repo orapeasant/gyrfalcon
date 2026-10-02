@@ -213,7 +213,7 @@ class RunStore:
         # whoever started the flow.
         who = require_principal()
         conn.execute(
-            sql.insert_run(self._db.dialect),
+            sql.insert_run(),
             (run_id, name, kind, StateType.PENDING.value, "Pending",
              _dumps(parameters or {}), parent_run_id, flow_run_id,
              _dumps(tags or []), now, now, self.instance_id, now,
@@ -227,8 +227,8 @@ class RunStore:
 
         Spec §15.6.3. `count_active()` followed by a decision to start is
         check-then-act: two runners both count `limit - 1`, both start, and the
-        limit is exceeded. Single-process SQLite hid this; two runners make it
-        wrong. Doing both inside one transaction makes the count and the row
+        limit is exceeded. Concurrent runners make this wrong. Doing both
+        inside one transaction makes the count and the row
         that invalidates it inseparable.
 
         Returns the reserved run id, or None if the limit is already reached.
@@ -378,7 +378,7 @@ class RunStore:
 
     def record_edge(self, downstream: str, upstream: str, kind: str = "data") -> None:
         with self._db.connect() as conn:
-            conn.execute(sql.insert_edge(self._db.dialect), (downstream, upstream, kind))
+            conn.execute(sql.insert_edge(), (downstream, upstream, kind))
 
     # -- reads ---------------------------------------------------------------
     def get_run(self, run_id: str, scope: Optional[Scope] = None) -> Optional[dict]:

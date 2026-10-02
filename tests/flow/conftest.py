@@ -85,7 +85,7 @@ def postgres_test_dsn() -> str | None:
     if not dsn:
         return None
     try:
-        import pg8000.dbapi  # noqa: F401
+        import psycopg  # noqa: F401
     except ImportError:
         return None
     return dsn
@@ -103,7 +103,7 @@ def pytest_collection_modifyitems(items):
 def _backend_params():
     dsn = postgres_test_dsn()
     skip = pytest.mark.skip(
-        reason="PostgreSQL suite needs GYRFALCON_TEST_PG_DSN set and pg8000 installed"
+        reason="PostgreSQL suite needs GYRFALCON_TEST_PG_DSN set and Psycopg 3 installed"
     )
     return [
         pytest.param("postgres", id="postgres", marks=() if dsn else (skip,)),
@@ -120,11 +120,12 @@ def store_target(request, tmp_path) -> dict:
     dsn = postgres_test_dsn()
     from gyrfalcon.db import open_database
     from gyrfalcon.db import schema as sch
+    from gyrfalcon.db.migrations import ensure_schema
 
     db = open_database(backend="postgres", dsn=dsn)
     try:
+        ensure_schema(db)
         with db.connect() as conn:
-            conn.executescript(sch.render(sch.ALL_TABLES, db.dialect))
             names = ", ".join(t.name for t in sch.ALL_TABLES)
             conn.execute(f"TRUNCATE {names} RESTART IDENTITY CASCADE")
     finally:

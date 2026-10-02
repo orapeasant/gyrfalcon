@@ -35,7 +35,9 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.46b0",
     "opentelemetry-instrumentation-httpx>=0.46b0",
     "opentelemetry-exporter-otlp>=1.25.0",
-    "pg8000>=1.31.5",
+    "sqlalchemy>=2.0.40",
+    "alembic>=1.15.2",
+    "psycopg[binary]>=3.2.6",
 ]
 
 [project.optional-dependencies]
@@ -96,6 +98,7 @@ select = ["E", "F", "W", "I"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["gyrfalcon", "gyrfalcon_cli", "tui_gateway"]
+artifacts = ["gyrfalcon/db/alembic.ini", "gyrfalcon/db/alembic/script.py.mako"]
 
 [dependency-groups]
 dev = [

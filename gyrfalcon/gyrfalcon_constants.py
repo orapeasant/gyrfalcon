@@ -35,29 +35,6 @@ def get_app_name() -> str:
     return os.environ.get("GYRFALCON_APP_NAME", DEFAULT_APP_NAME)
 
 
-RUN_MODES = ("SERVER", "CLIENT")
-DEFAULT_RUN_MODE = "CLIENT"
-
-
-def get_run_mode() -> str:
-    """"SERVER" or "CLIENT" — resolved once, from `RUN_MODE`.
-
-    `RUN_MODE` is set into the environment before this is ever called: a
-    `.env` value is loaded as-is (and, per `main.py`'s `_apply_run_mode`,
-    always wins), while `--server`/`--client` only fill it in when `.env`
-    left it unset. Reading `os.environ` here rather than threading a mode
-    argument through every caller keeps the two entry points (CLI args,
-    `.env`) collapsed onto the one place everything downstream — DB backend
-    selection today, more later — actually reads from.
-
-    Defaults to "CLIENT" (single-user) on an unset or invalid value.
-    """
-    raw = os.environ.get("RUN_MODE", "").strip().upper()
-    if raw in RUN_MODES:
-        return raw
-    return DEFAULT_RUN_MODE
-
-
 def is_frozen() -> bool:
     """True when running from a PyInstaller bundle."""
     import sys

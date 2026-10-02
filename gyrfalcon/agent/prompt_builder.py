@@ -204,7 +204,7 @@ def load_soul_md() -> Optional[str]:
 # actually present on this machine are listed by name.
 _NOTABLE_CLIS: tuple[str, ...] = (
     "aws", "az", "gcloud", "kubectl", "docker", "gh", "git",
-    "terraform", "psql", "mysql", "sqlite3", "curl", "jq",
+    "terraform", "psql", "mysql", "curl", "jq",
 )
 
 

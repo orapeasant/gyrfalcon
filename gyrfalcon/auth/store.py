@@ -2,7 +2,7 @@
 
 Spec: §17.11 step 8.
 
-Shares the flow database, dialect layer and migration counter (see
+Shares the flow database and Alembic schema version (see
 `db/schema.py`), so a deployment configures one DSN rather than two and
 cannot end up with half a schema.
 
@@ -159,7 +159,7 @@ class AuthStore:
             conn.execute(sql.INSERT_USER, (user_id, "local-password", normalized,
                                            email.strip(), display_name.strip() or normalized,
                                            now, None))
-            conn.execute(sql.insert_membership(self._db.dialect),
+            conn.execute(sql.insert_membership(),
                          (user_id, tenant_id, json.dumps(sorted(set(roles))), now))
             conn.execute(sql.INSERT_LOCAL_CREDENTIAL,
                          (normalized, user_id, self._password_hash(password), 0, now))
@@ -290,7 +290,7 @@ class AuthStore:
         customer must not make you one everywhere."""
         with self._db.connect() as conn:
             conn.execute(
-                sql.insert_membership(self._db.dialect),
+                sql.insert_membership(),
                 (user_id, org_id, json.dumps(sorted(set(roles))), time.time()),
             )
             conn.execute(

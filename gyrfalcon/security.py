@@ -69,6 +69,9 @@ def create_service_account(name: str, scopes: list[str]) -> tuple[dict, str]:
     """Returns (public record, plaintext client_secret). The secret is
     returned only this once — it is never recoverable from storage again,
     only rotated."""
+    from gyrfalcon.identity import require_principal
+
+    owner = require_principal()
     accounts = load_service_accounts()
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     client_id = f"sa_{_secrets.token_hex(8)}"
@@ -79,6 +82,8 @@ def create_service_account(name: str, scopes: list[str]) -> tuple[dict, str]:
         "client_id": client_id,
         "client_secret_hash": _hash_secret(client_secret),
         "scopes": scopes,
+        "tenant_id": owner.tenant_id,
+        "created_by": owner.user_id,
         "enabled": True,
         "created_at": now,
         "last_used_at": None,
@@ -175,7 +180,16 @@ def validate_access_token(token: str) -> Optional[dict]:
     if claims["expires_at"] < time.time():
         _issued_tokens.pop(token, None)
         return None
-    return claims
+    # An access token loses authority when its service account is disabled or
+    # removed. Resolve the tenant from the account, not from a shared local
+    # principal or client-supplied token claims.
+    account = next((a for a in load_service_accounts()
+                    if a["id"] == claims["service_account_id"] and a.get("enabled")), None)
+    if account is None:
+        _issued_tokens.pop(token, None)
+        return None
+    return {**claims, "tenant_id": account.get("tenant_id", "local"),
+            "service_account_name": account.get("name", "")}
 
 
 # ── Secret store ─────────────────────────────────────────────────────────────

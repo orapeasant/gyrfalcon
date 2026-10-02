@@ -9,7 +9,7 @@ import secrets
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import (
     Depends,
@@ -152,15 +152,19 @@ def _resolve_principal(request: Request):
         if principal is not None:
             return principal
 
-        # A Service Account's OAuth2 access token (Administration > Security).
-        # Resolves to LOCAL, same as the shared dashboard token below — a
-        # service account is not yet a distinct principal type, it's another
-        # way to prove "an operator of this install" for a non-interactive
-        # caller.
+        # Service accounts are distinct tenant-scoped callers. In particular,
+        # flow invocations must retain the actual caller in their run record.
         from gyrfalcon.security import validate_access_token
 
-        if validate_access_token(token) is not None:
-            return identity.LOCAL
+        claims = validate_access_token(token)
+        if claims is not None:
+            return identity.Principal(
+                user_id=f"service:{claims['service_account_id']}",
+                tenant_id=claims["tenant_id"],
+                display_name=claims["service_account_name"],
+                roles=frozenset(claims["scopes"]),
+                source="oauth",
+            )
 
     from gyrfalcon.auth.session import COOKIE_NAME, get_session_store
 
@@ -2039,7 +2043,9 @@ class AgentCreateRequest(BaseModel):
 @app.get("/api/agents")
 async def list_agents_api(request: Request):
     _verify_token(request)
-    return {"agents": [_agent_entry(a) for a in _load_agents()]}
+    from gyrfalcon.agents import agent_config_version
+    return {"agents": [{**_agent_entry(a), "flow_version": agent_config_version(a)}
+                        for a in _load_agents()]}
 
 
 @app.post("/api/agents")
@@ -2424,144 +2430,7 @@ async def websocket_gateway(ws: WebSocket):
         logger.info("WebSocket connection closed")
 
 
-# --- Flow Engine (spec 15-flow.md) ---
-# Conventions from §11: filter-by-POST with a structured predicate, a dedicated
-# /history endpoint returning pre-bucketed aggregates, and set_state as an
-# explicit action endpoint rather than a PATCH — because it is a request that
-# may be refused.
-
-class FlowRunFilter(BaseModel):
-    limit: int = 50
-    offset: int = 0
-    state_types: Optional[list[str]] = None
-    name: Optional[str] = None
-    kind: Optional[str] = None
-    flow_run_id: Optional[str] = None
-    created_from: Optional[float] = None
-    created_to: Optional[float] = None
-
-
-class FlowRunBulkDelete(BaseModel):
-    run_ids: list[str]
-
-
-def _flow_store():
-    from gyrfalcon.flow.store import get_store
-    return get_store()
-
-
-@app.get("/api/flow/definitions")
-async def list_flow_definitions(request: Request):
-    """Registered @flow templates — the code-first analogue of a definition."""
-    _verify_token(request)
-    from gyrfalcon.flow.registry import list_definitions
-    return {"definitions": list_definitions()}
-
-
-@app.post("/api/flow/definitions/reload")
-async def reload_flow_definitions(request: Request):
-    """Re-scan ~/.gyrfalcon/flows/ for files added or changed since startup.
-
-    `discover_flows()` otherwise runs only once, at startup, so a file dropped
-    in afterwards stays invisible until the process restarts — and the list
-    endpoint's "Refresh" only re-reads the in-memory registry, which makes the
-    file look like it was ignored rather than never looked for.
-
-    Registered under `/definitions/reload` before the `/{name}/…` routes so it
-    is not swallowed as a definition literally named "reload".
-    """
-    _verify_token(request)
-    from gyrfalcon.flow.registry import discover_flows, get_import_errors, list_definitions
-    imported = discover_flows()
-    return {
-        "imported": imported,
-        "errors": get_import_errors(),
-        "definitions": list_definitions(),
-    }
-
-
-@app.get("/api/flow/definitions/{name}/source")
-async def get_flow_definition_source(request: Request, name: str):
-    _verify_token(request)
-    from gyrfalcon.flow.registry import get_source
-    try:
-        return get_source(name)
-    except ValueError as e:
-        raise HTTPException(404 if "No definition" in str(e) else 400, str(e))
-
-
-class FlowSourceUpdate(BaseModel):
-    content: str
-
-
-@app.put("/api/flow/definitions/{name}/source")
-async def save_flow_definition_source(request: Request, name: str, body: FlowSourceUpdate):
-    _verify_token(request)
-    from gyrfalcon.flow.registry import save_source
-    try:
-        save_source(name, body.content)
-    except ValueError as e:
-        raise HTTPException(404 if "No definition" in str(e) else 400, str(e))
-    return {"status": "saved"}
-
-
-@app.delete("/api/flow/definitions/{name}")
-async def delete_flow_definition(request: Request, name: str):
-    _verify_token(request)
-    from gyrfalcon.flow.registry import delete_source
-
-    affected = [d["id"] for d in _dep_store().list_all() if d["flow_name"] == name]
-    try:
-        delete_source(name)
-    except ValueError as e:
-        raise HTTPException(404 if "No definition" in str(e) else 400, str(e))
-    result = {"status": "deleted"}
-    if affected:
-        result["note"] = (
-            f"{len(affected)} deployment(s) still reference this flow and will "
-            f"now be skipped by the runner rather than firing."
-        )
-    return result
-
-
-class FlowDefinitionDuplicate(BaseModel):
-    new_name: str
-
-
-@app.post("/api/flow/definitions/{name}/duplicate")
-async def duplicate_flow_definition(request: Request, name: str, body: FlowDefinitionDuplicate):
-    _verify_token(request)
-    from gyrfalcon.flow.registry import duplicate_source
-    try:
-        duplicate_source(name, body.new_name.strip())
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    from gyrfalcon.flow.registry import list_definitions
-    dup = next((d for d in list_definitions() if d["name"] == body.new_name.strip()), None)
-    return dup or {"name": body.new_name.strip()}
-
-
-class FlowDefinitionRun(BaseModel):
-    parameters: dict = {}
-
-
-@app.post("/api/flow/definitions/{name}/run")
-async def run_flow_definition_now(request: Request, name: str, body: FlowDefinitionRun):
-    """Run a definition directly — no deployment needed. The Definitions
-    page's own Run button (§14.12), for ad-hoc parameters rather than a
-    saved schedule."""
-    _verify_token(request)
-    from gyrfalcon.flow.registry import run_definition_now
-    try:
-        run_id = run_definition_now(name, body.parameters)
-    except ValueError as e:
-        raise HTTPException(404 if "No definition" in str(e) else 400, str(e))
-    return {"run_id": run_id}
-
-
-# Database-authored graphs use the same run store as Python-authored flows.
-# A bearer API key can call the invoke route as a webhook; the dashboard uses
-# its authenticated session through the same path.
+# Visual graph authoring and runtime share SQLAlchemy-backed stores.
 def _graph_store():
     from gyrfalcon.flow import sample_activities  # noqa: F401 - register built-ins
     from gyrfalcon.flow.graphs import GraphStore
@@ -2580,9 +2449,13 @@ class GraphDraft(BaseModel):
     draft: dict
 
 
-class GraphInvoke(BaseModel):
-    inputs: dict = {}
-    version: int | None = None
+class GraphRename(BaseModel):
+    name: str
+
+
+class GraphEnabled(BaseModel):
+    enabled: bool
+
 
 
 def _require_flow_designer(request: Request):
@@ -2599,6 +2472,34 @@ async def list_graph_activities(request: Request):
     from gyrfalcon.flow.registry import discover_flows, list_activities
 
     discover_flows()
+    return {"activities": list_activities()}
+
+
+@app.get("/api/flow/graphs/activity-modules")
+async def list_graph_activity_modules(request: Request):
+    _require_flow_designer(request)
+    from gyrfalcon.flow.registry import list_activity_modules
+    return {"modules": list_activity_modules()}
+
+
+@app.get("/api/flow/graphs/activity-modules/{name}")
+async def get_graph_activity_module(request: Request, name: str):
+    _require_flow_designer(request)
+    from gyrfalcon.flow.registry import get_activity_module
+    try:
+        return {"name": name, "content": get_activity_module(name)}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.put("/api/flow/graphs/activity-modules/{name}")
+async def save_graph_activity_module(request: Request, name: str, body: FlowSourceUpdate):
+    _require_flow_designer(request)
+    from gyrfalcon.flow.registry import list_activities, save_activity_module
+    try:
+        save_activity_module(name, body.content)
+    except (ValueError, SyntaxError) as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {"activities": list_activities()}
 
 
@@ -2655,6 +2556,18 @@ async def get_flow_graph(request: Request, definition_id: str):
         store.close()
 
 
+@app.get("/api/flow/graphs/{definition_id}/attrs")
+async def get_flow_graph_attrs(request: Request, definition_id: str, version: int = 0):
+    _require_flow_designer(request)
+    store = _graph_store()
+    try:
+        return {"attributes": store.attributes(definition_id, version)}
+    except KeyError as exc:
+        raise HTTPException(404, "Graph not found") from exc
+    finally:
+        store.close()
+
+
 @app.put("/api/flow/graphs/{definition_id}/draft")
 async def save_flow_graph_draft(request: Request, definition_id: str, body: GraphDraft):
     _require_flow_designer(request)
@@ -2662,6 +2575,36 @@ async def save_flow_graph_draft(request: Request, definition_id: str, body: Grap
     try:
         store.save_draft(definition_id, body.draft)
         return {"status": "saved"}
+    except KeyError as exc:
+        raise HTTPException(404, "Graph not found") from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        store.close()
+
+
+@app.put("/api/flow/graphs/{definition_id}/name")
+async def rename_flow_graph(request: Request, definition_id: str, body: GraphRename):
+    _require_flow_designer(request)
+    store = _graph_store()
+    try:
+        store.rename(definition_id, body.name)
+        return {"status": "renamed"}
+    except KeyError as exc:
+        raise HTTPException(404, "Graph not found") from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        store.close()
+
+
+@app.put("/api/flow/graphs/{definition_id}/enabled")
+async def set_flow_graph_enabled(request: Request, definition_id: str, body: GraphEnabled):
+    _require_flow_designer(request)
+    store = _graph_store()
+    try:
+        store.set_enabled(definition_id, body.enabled)
+        return {"status": "updated", "enabled": body.enabled}
     except KeyError as exc:
         raise HTTPException(404, "Graph not found") from exc
     finally:
@@ -2695,309 +2638,571 @@ async def publish_flow_graph(request: Request, definition_id: str):
         store.close()
 
 
-@app.post("/api/flow/graphs/{definition_id}/invoke")
-@app.post("/api/webhooks/flows/{definition_id}")
-async def invoke_flow_graph(request: Request, definition_id: str, body: GraphInvoke):
-    _verify_token(request)
-
-    def execute():
-        store = _graph_store()
-        try:
-            version = body.version or store.latest_version(definition_id)
-            if version is None:
-                raise ValueError("Publish this graph before invoking it")
-            return store.run(definition_id, version, body.inputs)
-        finally:
-            store.close()
-
+@app.post("/api/flow/graphs/{definition_id}/unpublish")
+async def unpublish_flow_graph(request: Request, definition_id: str):
+    _require_flow_designer(request)
+    store = _graph_store()
     try:
-        return await _asyncio.to_thread(execute)
+        store.unpublish(definition_id)
+        return {"status": "unpublished"}
     except KeyError as exc:
-        raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(404, "Graph not found") from exc
+    finally:
+        store.close()
+
+
+class VisualDeploymentCreate(BaseModel):
+    name: str
+    short_name: str
+    definition_id: str
+    version: int | None = None
+    schedule: str | None = None
+    input_schema: dict = {}
+    parameters: dict = {}
+    allowed_service_account_ids: list[str] = []
+    paused: bool = False
+
+
+class VisualRunRequest(BaseModel):
+    inputs: dict = {}
+    caller_key: str | None = None
+
+
+class FlowResponseRequest(BaseModel):
+    value: Any = None
+    transient: str | None = None
+
+
+class FlowNotificationTemplate(BaseModel):
+    name: str
+    channel: str = "dashboard"
+    recipient_kind: str = "user"
+    recipient_ref: str
+    agent_id: str | None = None
+    subject_template: str | None = None
+    body_template: str | None = None
+    config: dict = {}
+
+
+def _visual_store(tenant_id: str | None = None):
+    from gyrfalcon.flow.runtime_store import FlowRuntimeStore
+    from gyrfalcon.identity import require_principal
+
+    principal = require_principal()
+    return FlowRuntimeStore(tenant_id=tenant_id or principal.tenant_id, migrate=True)
+
+
+def _schedule_next_at(schedule: str | None) -> float | None:
+    if not schedule:
+        return None
+    from datetime import datetime
+    from gyrfalcon.scheduler import next_run_iso, parse_schedule
+
+    value = next_run_iso(parse_schedule(schedule, use_llm=False))
+    return datetime.fromisoformat(value).timestamp() if value else None
+
+
+def _merge_visual_inputs(deployment: dict, supplied: dict) -> dict:
+    if not isinstance(supplied, dict):
+        raise ValueError("Flow inputs must be an object")
+    inputs = {**(deployment.get("parameters") or {}), **supplied}
+    schema = deployment.get("input_schema") or {}
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    required = schema.get("required", []) if isinstance(schema, dict) else []
+    if not isinstance(properties, dict) or not isinstance(required, list):
+        raise ValueError("Deployment input_schema must contain properties and required")
+    missing = [name for name in required if name not in inputs]
+    if missing:
+        raise ValueError("Missing required flow inputs: " + ", ".join(map(str, missing)))
+    if schema.get("additionalProperties") is False:
+        unknown = set(inputs) - set(properties)
+        if unknown:
+            raise ValueError("Unknown flow inputs: " + ", ".join(sorted(unknown)))
+    validators = {
+        "string": lambda value: isinstance(value, str),
+        "number": lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
+        "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+        "boolean": lambda value: isinstance(value, bool),
+        "object": lambda value: isinstance(value, dict),
+        "array": lambda value: isinstance(value, list),
+    }
+    for name, definition in properties.items():
+        if name in inputs and definition.get("type") in validators and not validators[definition["type"]](inputs[name]):
+            raise ValueError(f"Flow input {name!r} must be {definition['type']}")
+    return inputs
+
+
+def _authorize_service_flow_call(principal, deployment: dict, short_name: str) -> None:
+    if principal.source != "oauth":
+        raise HTTPException(401, "Flow endpoints require an OAuth service account")
+    service_account_id = principal.user_id.removeprefix("service:")
+    if service_account_id not in deployment.get("allowed_service_account_ids", []):
+        raise HTTPException(403, "Service account is not authorized for this flow endpoint")
+    if not (principal.has_role("flow:invoke") or principal.has_role(f"flow:invoke:{short_name}")):
+        raise HTTPException(403, "Service account lacks a flow invocation scope")
+
+
+@app.get("/api/flow/notification-templates")
+async def list_flow_notification_templates(request: Request):
+    _require_flow_designer(request)
+    store = _visual_store()
+    try:
+        return {"templates": store.list_notification_templates()}
+    finally:
+        store.close()
+
+
+@app.post("/api/flow/notification-templates")
+async def create_flow_notification_template(request: Request,
+                                            body: FlowNotificationTemplate):
+    principal = _require_flow_designer(request)
+    if body.recipient_kind not in {"user", "group", "role"}:
+        raise HTTPException(400, "recipient_kind must be user, group, or role")
+    if body.channel not in {"dashboard", "internal", "chat", "email"}:
+        raise HTTPException(400, "channel must be dashboard, internal, chat, or email")
+    if not body.recipient_ref.strip():
+        raise HTTPException(400, "recipient_ref is required")
+    store = _visual_store()
+    try:
+        return store.create_notification_template(
+            body.name.strip(), body.channel, body.recipient_kind,
+            body.recipient_ref.strip(), principal.user_id,
+            agent_id=body.agent_id, subject_template=body.subject_template,
+            body_template=body.body_template, config=body.config,
+        )
+    finally:
+        store.close()
+
+
+@app.put("/api/flow/notification-templates/{template_id}")
+async def update_flow_notification_template(request: Request, template_id: str,
+                                            body: FlowNotificationTemplate):
+    _require_flow_designer(request)
+    if body.recipient_kind not in {"user", "group", "role"}:
+        raise HTTPException(400, "recipient_kind must be user, group, or role")
+    if body.channel not in {"dashboard", "internal", "chat", "email"}:
+        raise HTTPException(400, "channel must be dashboard, internal, chat, or email")
+    if not body.recipient_ref.strip():
+        raise HTTPException(400, "recipient_ref is required")
+    store = _visual_store()
+    try:
+        return store.update_notification_template(
+            template_id, name=body.name.strip(), channel=body.channel,
+            recipient_kind=body.recipient_kind, recipient_ref=body.recipient_ref.strip(),
+            agent_id=body.agent_id, subject_template=body.subject_template,
+            body_template=body.body_template, config=body.config,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, "Notification template not found") from exc
+    finally:
+        store.close()
+
+
+@app.delete("/api/flow/notification-templates/{template_id}")
+async def delete_flow_notification_template(request: Request, template_id: str):
+    _require_flow_designer(request)
+    store = _visual_store()
+    try:
+        if not store.delete_notification_template(template_id):
+            raise HTTPException(404, "Notification template not found")
+        return {"status": "deleted"}
+    finally:
+        store.close()
+
+
+@app.get("/api/flow/inbox")
+async def get_flow_notification_inbox(request: Request, limit: int = 100):
+    principal = _verify_token(request)
+    store = _visual_store()
+    try:
+        notifications = store.list_recipient_notifications(
+            principal.user_id, tuple(principal.roles), limit=max(1, min(limit, 500)))
+        from gyrfalcon.flow.visual_executor import node_at_path
+        for item in notifications:
+            run = store.get_run(item["flow_run_id"])
+            version = store.get_version(run["definition_id"], run["version"]) if run else None
+            node = node_at_path(version["graph"], item["node_path"]) if version else None
+            timeout = (node or {}).get("notification", {}).get("timeoutTransient")
+            item["transients"] = [value for value in (node or {}).get("transients", []) if value != timeout]
+        return {"notifications": notifications}
+    finally:
+        store.close()
+
+
+@app.get("/api/flow/visual-runs")
+async def list_visual_runs(request: Request, limit: int = 100, offset: int = 0,
+                           state: Optional[str] = None, q: Optional[str] = None):
+    principal = _verify_token(request)
+    store = _visual_store()
+    try:
+        rows, total = store.list_run_page(limit=limit, offset=offset, state=state,
+            user_id=None if principal.is_operator else principal.user_id, search=q)
+        for row in rows:
+            inputs = row.get("parameters") if isinstance(row.get("parameters"), dict) else {}
+            row["inventory_org"] = (inputs.get("inventory_org") or
+                inputs.get("inventory_organization") or inputs.get("inventoryOrganization"))
+            row["business_unit"] = (inputs.get("business_unit") or inputs.get("businessUnit")
+                                    or row.get("business_unit"))
+        return {"runs": rows, "total": total}
+    finally:
+        store.close()
+
+
+@app.get("/api/flow/visual-events")
+async def list_visual_events(request: Request, limit: int = 100, offset: int = 0,
+                             event_type: Optional[str] = None):
+    _verify_token(request)
+    store = _visual_store()
+    try:
+        rows, total = store.list_recent_events(limit=limit, offset=offset,
+                                               event_type=event_type)
+        return {"events": rows, "total": total}
+    finally:
+        store.close()
+
+
+@app.get("/api/flow/visual-deployments")
+async def list_visual_deployments(request: Request):
+    _require_flow_designer(request)
+    store = _visual_store()
+    try:
+        return {"deployments": store.list_deployments()}
+    finally:
+        store.close()
+
+
+@app.post("/api/flow/visual-deployments")
+async def create_visual_deployment(request: Request, body: VisualDeploymentCreate):
+    principal = _require_flow_designer(request)
+    store = _visual_store()
+    try:
+        definition = store.get_definition(body.definition_id)
+        if definition is None:
+            raise HTTPException(404, "Flow definition not found")
+        if not definition.get("published"):
+            raise HTTPException(400, "Publish the flow before creating a deployment")
+        version = body.version or (store.list_versions(body.definition_id)[0]["version"]
+                                  if store.list_versions(body.definition_id) else None)
+        if version is None or store.get_version(body.definition_id, version) is None:
+            raise HTTPException(400, "Publish the flow version before deployment")
+        return store.create_deployment(
+            name=body.name.strip(), short_name=body.short_name.strip().lower(),
+            definition_id=body.definition_id, version=version, user_id=principal.user_id,
+            schedule=body.schedule, input_schema=body.input_schema,
+            parameters=body.parameters,
+            allowed_service_account_ids=body.allowed_service_account_ids,
+            paused=body.paused, next_run_at=_schedule_next_at(body.schedule),
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    finally:
+        store.close()
 
 
-@app.post("/api/flow/runs/filter")
-async def filter_flow_runs(request: Request, body: FlowRunFilter):
-    """Filter by POST: structured predicates do not fit in a query string."""
-    _verify_token(request)
-    runs, total = _flow_store().list_runs(
-        limit=body.limit, offset=body.offset, state_types=body.state_types,
-        name=body.name, kind=body.kind, flow_run_id=body.flow_run_id,
-        created_from=body.created_from, created_to=body.created_to,
-    )
-    return {"runs": runs, "total": total}
-
-
-@app.get("/api/flow/runs/{run_id}")
-async def get_flow_run(request: Request, run_id: str):
-    _verify_token(request)
-    run = _flow_store().get_run(run_id)
-    if not run:
-        raise HTTPException(404, f"Flow run not found: {run_id}")
-    return run
-
-
-@app.get("/api/flow/runs/{run_id}/history")
-async def get_flow_run_history(request: Request, run_id: str):
-    """Every proposed transition, accepted or not — the audit trail."""
-    _verify_token(request)
-    if not _flow_store().get_run(run_id):
-        raise HTTPException(404, f"Flow run not found: {run_id}")
-    return {"history": _flow_store().get_history(run_id)}
-
-
-@app.get("/api/flow/runs/{run_id}/graph")
-async def get_flow_run_graph(request: Request, run_id: str):
-    """Nodes and edges for the run graph. The DAG is discovered by execution."""
-    _verify_token(request)
-    if not _flow_store().get_run(run_id):
-        raise HTTPException(404, f"Flow run not found: {run_id}")
-    return _flow_store().get_graph(run_id)
-
-
-@app.post("/api/flow/runs/{run_id}/cancel")
-async def cancel_flow_run(request: Request, run_id: str):
-    """An action endpoint, not a PATCH: the request may be refused."""
-    _verify_token(request)
-    run = _flow_store().request_cancel(run_id)
-    if run is None:
-        raise HTTPException(404, f"Flow run not found: {run_id}")
-    if run["is_final"]:
-        return {"status": "refused", "reason": f"run is already {run['state_name']}", "run": run}
-    return {"status": "cancelling", "run": run}
-
-
-def _best_effort_params(parameters: dict) -> dict:
-    """Recovers real values from a run's stored parameters.
-
-    The engine stores every run's `parameters` as `repr()` text for display
-    and audit only (`flow/engine.py`), never as replayable data — so a retry
-    can't just resubmit them as-is. `ast.literal_eval` round-trips the common
-    JSON-like cases (str, int, float, bool, list, dict, None); anything else
-    (an object whose repr isn't a literal) is left as the repr string, which
-    the retried flow will receive as-is rather than crash the retry attempt.
-    """
-    import ast
-
-    out: dict = {}
-    for k, v in parameters.items():
-        if isinstance(v, str):
-            try:
-                out[k] = ast.literal_eval(v)
-                continue
-            except (ValueError, SyntaxError):
-                pass
-        out[k] = v
-    return out
-
-
-@app.post("/api/flow/runs/{run_id}/retry")
-async def retry_flow_run(request: Request, run_id: str):
-    """Resubmits a finished flow run as a new run of the same definition."""
-    _verify_token(request)
-    run = _flow_store().get_run(run_id)
-    if run is None:
-        raise HTTPException(404, f"Flow run not found: {run_id}")
-    if run["kind"] != "flow":
-        raise HTTPException(400, "Only flow runs can be retried directly")
-    if not run["is_final"]:
-        raise HTTPException(400, "Run is still active")
-    from gyrfalcon.flow.registry import run_definition_now
+@app.put("/api/flow/visual-deployments/{deployment_id}")
+async def update_visual_deployment(request: Request, deployment_id: str,
+                                   body: VisualDeploymentCreate):
+    principal = _require_flow_designer(request)
+    store = _visual_store()
     try:
-        new_run_id = run_definition_now(run["name"], _best_effort_params(run["parameters"] or {}))
-    except ValueError as e:
-        raise HTTPException(404 if "No definition" in str(e) else 400, str(e))
-    return {"run_id": new_run_id}
+        current = store.get_deployment(deployment_id)
+        if current is None:
+            raise HTTPException(404, "Deployment not found")
+        definition = store.get_definition(body.definition_id)
+        if definition is None:
+            raise HTTPException(404, "Flow definition not found")
+        if not definition.get("published"):
+            raise HTTPException(400, "Publish the flow before updating a deployment")
+        version = body.version
+        if version is None:
+            versions = store.list_versions(body.definition_id)
+            version = versions[0]["version"] if versions else None
+        if version is None or store.get_version(body.definition_id, version) is None:
+            raise HTTPException(400, "Publish the flow version before deployment")
+        return store.update_deployment(
+            deployment_id, name=body.name.strip(), short_name=body.short_name.strip().lower(),
+            definition_id=body.definition_id, version=version, schedule=body.schedule,
+            input_schema=body.input_schema, parameters=body.parameters,
+            allowed_service_account_ids=body.allowed_service_account_ids,
+            paused=int(body.paused), next_run_at=_schedule_next_at(body.schedule),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        store.close()
 
 
-@app.delete("/api/flow/runs/{run_id}")
-async def delete_flow_run(request: Request, run_id: str):
-    """An action endpoint like cancel: refuses rather than tearing down a
-    still-active run out from under its own engine."""
-    _verify_token(request)
-    result = _flow_store().delete_run(run_id)
-    if result is None:
-        raise HTTPException(404, f"Flow run not found: {run_id}")
-    if result is False:
-        raise HTTPException(400, "Run is still active; cancel it first")
-    return {"status": "deleted"}
+@app.delete("/api/flow/visual-deployments/{deployment_id}")
+async def delete_visual_deployment(request: Request, deployment_id: str):
+    _require_flow_designer(request)
+    store = _visual_store()
+    try:
+        if not store.delete_deployment(deployment_id):
+            raise HTTPException(404, "Deployment not found")
+        return {"deleted": True}
+    finally:
+        store.close()
 
 
-@app.post("/api/flow/runs/delete")
-async def delete_flow_runs(request: Request, body: FlowRunBulkDelete):
-    """Bulk delete for the Instances page's "delete selected" action."""
-    _verify_token(request)
-    store = _flow_store()
-    deleted, refused, missing = [], [], []
-    for run_id in body.run_ids:
-        result = store.delete_run(run_id)
-        if result is None:
-            missing.append(run_id)
-        elif result is False:
-            refused.append(run_id)
-        else:
-            deleted.append(run_id)
-    return {"deleted": deleted, "refused": refused, "missing": missing}
-
-
-@app.get("/api/flow/stats")
-async def get_flow_stats(request: Request, hours: int = 24, buckets: int = 24):
-    """Pre-bucketed so the UI never aggregates (§11)."""
-    _verify_token(request)
-    store = _flow_store()
-    return {
-        "counts": store.counts_by_state(),
-        "history": store.history_buckets(hours=hours, buckets=buckets),
-    }
-
-
-@app.get("/api/flow/tasks")
-async def list_flow_human_tasks(request: Request):
-    """Pending approval gates — the human-in-the-loop inbox (§8)."""
-    _verify_token(request)
-    from gyrfalcon.flow.pause import list_pending
-    return {"tasks": list_pending()}
-
-
-@app.post("/api/flow/tasks/{run_id}/respond")
-async def respond_to_flow_task(request: Request, run_id: str):
-    """Answer an approval gate.
-
-    Authorization is enforced in `resume_flow_run` rather than here, so the
-    same rule applies however the answer arrives — dashboard, REST gateway, or
-    chat (§16.4's tier-1 types answer in place). This endpoint used to resume
-    *any* run for *any* caller (§17.1).
-    """
+@app.post("/api/flow/visual-deployments/{deployment_id}/run")
+async def run_visual_deployment(request: Request, deployment_id: str,
+                                body: VisualRunRequest = VisualRunRequest()):
     principal = _verify_token(request)
-    from gyrfalcon.flow.pause import NotThePerformerError, resume_flow_run
-
-    body = await request.json()
+    store = _visual_store()
     try:
-        result = resume_flow_run(
-            run_id, run_input=body.get("run_input"), principal=principal
+        deployment = store.get_deployment(deployment_id)
+        if deployment is None:
+            raise HTTPException(404, "Deployment not found")
+        if principal.source == "oauth":
+            _authorize_service_flow_call(principal, deployment, deployment["short_name"])
+        try:
+            inputs = _merge_visual_inputs(deployment, body.inputs)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        run = store.create_run(
+            deployment["definition_id"], deployment["version"], inputs, "manual",
+            user_id=principal.user_id, deployment_id=deployment["id"],
+            caller_key=body.caller_key or request.headers.get("Idempotency-Key"),
+            trigger_ref=deployment["id"],
         )
-    except NotThePerformerError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
-    return {
-        "status": "resumed",
-        "flow_run_id": result.flow_run_id,
-        "answered_by": principal.user_id,
-    }
+        store.record_event(run["id"], "flow.queued", {"trigger": "manual"})
+        return {"run_id": run["id"], "state": run["state"]}
+    finally:
+        store.close()
 
 
-# --- Deployments (spec §9.1) ---
-
-class FlowDeploymentCreate(BaseModel):
-    name: str
-    flow_name: str
-    schedule: Optional[str] = None
-    parameters: dict = {}
-    tags: list[str] = []
-    concurrency_limit: Optional[int] = None
-
-
-def _dep_store():
-    from gyrfalcon.flow.deployments import get_deployment_store
-    return get_deployment_store()
-
-
-@app.get("/api/flow/deployments")
-async def list_flow_deployments(request: Request):
-    _verify_token(request)
-    from gyrfalcon.flow.runner import is_runner_running
-    return {"deployments": _dep_store().list_all(), "runner_running": is_runner_running()}
-
-
-@app.post("/api/flow/deployments")
-async def create_flow_deployment(request: Request, body: FlowDeploymentCreate):
-    _verify_token(request)
+@app.post("/api/flow/endpoints/{short_name}")
+async def invoke_visual_endpoint(request: Request, short_name: str,
+                                 body: VisualRunRequest = VisualRunRequest()):
+    principal = _verify_token(request)
+    store = _visual_store()
     try:
-        dep = _dep_store().create(
-            name=body.name, flow_name=body.flow_name, schedule=body.schedule,
-            parameters=body.parameters, tags=body.tags,
-            concurrency_limit=body.concurrency_limit,
+        deployment = store.get_deployment(short_name=short_name)
+        if deployment is None or deployment.get("paused"):
+            raise HTTPException(404, "Flow endpoint not found or paused")
+        _authorize_service_flow_call(principal, deployment, short_name)
+        try:
+            merged = _merge_visual_inputs(deployment, body.inputs)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        run = store.create_run(
+            deployment["definition_id"], deployment["version"], merged, "webhook",
+            user_id=principal.user_id, deployment_id=deployment["id"],
+            caller_key=body.caller_key or request.headers.get("Idempotency-Key"),
+            trigger_ref=short_name,
         )
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    from gyrfalcon.flow.runner import is_runner_running
-    result = dict(dep)
-    if dep.get("schedule") and not is_runner_running():
-        result["note"] = "Runner is not running — this deployment will not fire until it starts."
-    return result
+        store.record_event(run["id"], "flow.queued", {"trigger": "webhook"})
+        return {"run_id": run["id"], "state": run["state"]}
+    finally:
+        store.close()
 
 
-@app.put("/api/flow/deployments/{deployment_id}")
-async def update_flow_deployment(request: Request, deployment_id: str, body: FlowDeploymentCreate):
-    _verify_token(request)
-    dep = _dep_store().update(
-        deployment_id, name=body.name, schedule=body.schedule,
-        parameters=body.parameters, tags=body.tags,
-        concurrency_limit=body.concurrency_limit,
-    )
-    if dep is None:
-        raise HTTPException(404, f"Deployment not found: {deployment_id}")
-    return dep
-
-
-@app.post("/api/flow/deployments/{deployment_id}/run")
-async def run_flow_deployment_now(request: Request, deployment_id: str):
-    _verify_token(request)
-    from gyrfalcon.flow.runner import get_runner
-
+@app.get("/api/flow/visual-runs/{run_id}")
+async def get_visual_run(request: Request, run_id: str):
+    principal = _verify_token(request)
+    store = _visual_store()
     try:
-        run_id = get_runner().run_now(deployment_id)
-    except ValueError as e:
-        raise HTTPException(404 if "No deployment" in str(e) else 400, str(e))
-    return {"run_id": run_id}
+        run = store.get_run(run_id)
+        if run is None:
+            raise HTTPException(404, "Flow run not found")
+        if not principal.is_operator and run["user_id"] != principal.user_id:
+            raise HTTPException(403, "Flow run is not visible to this user")
+        version = store.get_version(run["definition_id"], run["version"])
+        return {**run, "graph": version["graph"] if version else None,
+                "nodes": store.list_node_visits(run_id),
+                "events": store.list_events(run_id)}
+    finally:
+        store.close()
 
 
-@app.post("/api/flow/deployments/{deployment_id}/pause")
-async def pause_flow_deployment(request: Request, deployment_id: str):
-    _verify_token(request)
-    dep = _dep_store().set_paused(deployment_id, True)
-    if dep is None:
-        raise HTTPException(404, f"Deployment not found: {deployment_id}")
-    return dep
+class FlowRunBulkDelete(BaseModel):
+    run_ids: list[str]
 
 
-@app.post("/api/flow/deployments/{deployment_id}/resume")
-async def resume_flow_deployment(request: Request, deployment_id: str):
-    _verify_token(request)
-    dep = _dep_store().set_paused(deployment_id, False)
-    if dep is None:
-        raise HTTPException(404, f"Deployment not found: {deployment_id}")
-    return dep
+def _require_run_access(principal, run):
+    if not principal.is_operator and run["user_id"] != principal.user_id:
+        raise HTTPException(403, "Flow run is not accessible to this user")
 
 
-@app.delete("/api/flow/deployments/{deployment_id}")
-async def delete_flow_deployment(request: Request, deployment_id: str):
-    _verify_token(request)
-    if not _dep_store().delete(deployment_id):
-        raise HTTPException(404, f"Deployment not found: {deployment_id}")
-    return {"status": "deleted"}
+@app.post("/api/flow/visual-runs/{run_id}/retry")
+async def retry_visual_run(request: Request, run_id: str):
+    principal = _verify_token(request)
+    store = _visual_store()
+    try:
+        run = store.get_run(run_id)
+        if run is None:
+            raise HTTPException(404, "Flow run not found")
+        _require_run_access(principal, run)
+        try:
+            queued = store.retry_run(run_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if queued is None:
+            raise HTTPException(409, "Only failed or crashed runs can be retried")
+        store.record_event(run_id, "flow.retry_queued", {
+            "current_node_path": queued.get("current_node_path")})
+        return {"run_id": run_id, "state": queued["state"],
+                "current_node_path": queued.get("current_node_path")}
+    finally:
+        store.close()
 
 
-# --- Events (spec §10) ---
+@app.post("/api/flow/visual-runs/{run_id}/rewind")
+async def rewind_visual_run(request: Request, run_id: str):
+    principal = _verify_token(request)
+    store = _visual_store()
+    try:
+        run = store.get_run(run_id)
+        if run is None:
+            raise HTTPException(404, "Flow run not found")
+        _require_run_access(principal, run)
+        if run["state"] not in {"completed", "failed", "cancelled", "crashed"}:
+            raise HTTPException(409, "Only a finished run can be rewound")
+        if not run.get("deployment_id"):
+            raise HTTPException(409, "This run has no deployment to rewind")
+        definition = store.get_definition(run["definition_id"])
+        if definition is None or not definition.get("enabled", True) or not definition.get("published", False):
+            raise HTTPException(409, "The flow must be enabled and published to rewind")
+        try:
+            replay = store.create_run(run["definition_id"], run["version"],
+                run.get("parameters") or {}, "rewind", user_id=run["user_id"],
+                deployment_id=run["deployment_id"], trigger_ref=run_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        store.record_event(replay["id"], "flow.rewound", {"source_run_id": run_id})
+        return {"run_id": replay["id"], "state": replay["state"], "source_run_id": run_id}
+    finally:
+        store.close()
 
-@app.get("/api/flow/events")
-async def list_flow_events(
-    request: Request, limit: int = 100, offset: int = 0,
-    event_type: Optional[str] = None, resource_id: Optional[str] = None,
-):
-    _verify_token(request)
-    events, total = _flow_store().events.list_events(
-        limit=limit, offset=offset, event_type=event_type, resource_id=resource_id,
-    )
-    return {"events": events, "total": total}
+
+@app.delete("/api/flow/visual-runs/{run_id}")
+async def delete_visual_run(request: Request, run_id: str):
+    principal = _verify_token(request)
+    store = _visual_store()
+    try:
+        run = store.get_run(run_id)
+        if run is None:
+            raise HTTPException(404, "Flow run not found")
+        _require_run_access(principal, run)
+        result = store.delete_run(run_id)
+        if result is False:
+            raise HTTPException(409, "Active runs cannot be deleted")
+        return {"deleted": True}
+    finally:
+        store.close()
 
 
-@app.get("/api/flow/events/{event_id}/chain")
-async def get_flow_event_chain(request: Request, event_id: str):
-    """The causal `follows` chain leading to this event."""
-    _verify_token(request)
-    return {"chain": _flow_store().events.follows_chain(event_id)}
+@app.post("/api/flow/visual-runs/delete")
+async def delete_visual_runs(request: Request, body: FlowRunBulkDelete):
+    principal = _verify_token(request)
+    store = _visual_store()
+    deleted, active, missing = [], [], []
+    try:
+        for run_id in body.run_ids:
+            run = store.get_run(run_id)
+            if run is None:
+                missing.append(run_id)
+                continue
+            _require_run_access(principal, run)
+            result = store.delete_run(run_id)
+            if result is False:
+                active.append(run_id)
+            elif result:
+                deleted.append(run_id)
+            else:
+                missing.append(run_id)
+        return {"deleted": deleted, "active": active, "missing": missing}
+    finally:
+        store.close()
+
+
+@app.post("/api/flow/visual-runs/{run_id}/respond")
+async def respond_to_visual_run(request: Request, run_id: str,
+                                body: FlowResponseRequest):
+    principal = _verify_token(request)
+    store = _visual_store()
+    try:
+        run = store.get_run(run_id)
+        if run is None:
+            raise HTTPException(404, "Flow run not found")
+        visit = store.get_waiting_visit(run_id)
+        if visit is None:
+            raise HTTPException(409, "Flow run is not waiting for a response")
+        version = store.get_version(run["definition_id"], run["version"])
+        from gyrfalcon.flow.visual_executor import node_at_path
+        node = node_at_path(version["graph"], visit["node_path"],
+            reference_resolver=lambda definition_id, version_number:
+                store.get_version(definition_id, version_number)["graph"])
+        if visit["node_kind"] == "notification":
+            notif = node.get("notification") or {}
+            template_id = notif.get("templateId") or notif.get("template_id")
+            template = (version.get("notification_snapshot") or {}).get(template_id, {})
+            kind, recipient = template.get("recipient_kind"), template.get("recipient_ref")
+            authorized = ((kind == "user" and recipient == principal.user_id)
+                or (kind == "group" and (recipient in principal.roles or f"group:{recipient}" in principal.roles))
+                or (kind == "role" and principal.has_role(recipient or "")))
+            if not authorized:
+                raise HTTPException(403, "You are not an authorized Notification recipient")
+            timeout_transient = notif.get("timeoutTransient") or notif.get("timeout_transient")
+            response_transients = [item for item in node.get("transients", [])
+                                   if item != timeout_transient]
+            if not body.transient or body.transient not in response_transients:
+                raise HTTPException(400, "Choose a declared Notification transient")
+            accepted = store.accept_response(visit["id"], body.value,
+                                             principal.user_id, body.transient)
+        else:
+            agent = node.get("agent") or {}
+            kind, recipient = agent.get("humanRecipientKind"), agent.get("humanRecipientRef")
+            if not kind or not recipient:
+                raise HTTPException(409, "Agent Activity has no configured human responder")
+            authorized = ((kind == "user" and recipient == principal.user_id)
+                or (kind == "group" and (recipient in principal.roles or f"group:{recipient}" in principal.roles))
+                or (kind == "role" and principal.has_role(recipient)))
+            if not authorized:
+                raise HTTPException(403, "You are not an authorized Activity responder")
+            accepted = store.accept_agent_reply(visit["id"], body.value, principal.user_id)
+        if accepted is None:
+            raise HTTPException(409, "Another responder won or the wait expired")
+        if accepted.get("ai_session_id"):
+            from gyrfalcon.db.scope import Scope
+            from gyrfalcon.sessions.store import SessionStore
+            session_db = SessionStore()
+            try:
+                session_db.append_flow_message(
+                    accepted["ai_session_id"], accepted["id"],
+                    content=json.dumps(body.value, ensure_ascii=False, default=str),
+                    message_kind="human_reply", channel="chat", direction="inbound",
+                    sender=principal.user_id,
+                    scope=Scope(tenant_id=run["tenant_id"], user_id=run["user_id"]),
+                )
+            finally:
+                session_db.close()
+        store.record_event(run_id, "node.response", {"responder": principal.user_id},
+                           visit_id=visit["id"])
+        return {"status": "accepted", "run_id": run_id}
+    finally:
+        store.close()
+
+
+@app.post("/api/flow/daemon/bounce")
+async def bounce_visual_flow_daemon(request: Request):
+    principal = _verify_token(request)
+    if not principal.has_role("admin", "system_admin", "operator"):
+        raise HTTPException(403, "Administrator role required")
+    from gyrfalcon.flow.visual_daemon import get_visual_daemon
+    get_visual_daemon().bounce()
+    return {"status": "bounced"}
+
+
+@app.get("/api/flow/daemon/status")
+async def visual_flow_daemon_status(request: Request):
+    principal = _verify_token(request)
+    if not principal.has_role("admin", "system_admin", "operator"):
+        raise HTTPException(403, "Administrator role required")
+    from gyrfalcon.flow.visual_daemon import get_visual_daemon
+    daemon = get_visual_daemon()
+    return {"running": daemon._thread is not None and daemon._thread.is_alive(),
+            "workers": daemon.max_workers, "active_runs": list(daemon._jobs)}
 
 
 # --- Authentication (spec 15-flow.md §17.11 step 8) ---
@@ -3491,18 +3696,28 @@ def run_dashboard():
     import uvicorn
     import threading as _t
 
-    # Turn on flow-run persistence for this process. The library defaults it
-    # off so a plain script has zero dependencies (§13.5 phases 1-3); the
-    # dashboard is exactly the durable, externally-controllable surface phase 4
-    # exists for, so it opts in here rather than the engine assuming it.
-    from gyrfalcon.flow.engine import _BaseRunEngine
-    _BaseRunEngine.persist = True
+    # Validate PostgreSQL and apply the Alembic baseline before starting any
+    # background workers. Otherwise the flow runner can fail repeatedly in a
+    # daemon thread while the dashboard appears to have started successfully.
+    from sqlalchemy.exc import SQLAlchemyError
 
-    # Same reasoning as persistence above: a deployment's schedule is inert
-    # without something ticking it, and the dashboard process is where that
-    # something lives for a single-box install (§9.2, Runner).
-    from gyrfalcon.flow.runner import start_runner
-    start_runner()
+    from gyrfalcon.db import open_database
+    from gyrfalcon.db.migrations import ensure_schema
+
+    database = None
+    try:
+        database = open_database()
+        ensure_schema(database)
+    except (ValueError, RuntimeError, SQLAlchemyError) as exc:
+        raise SystemExit(
+            "Cannot start the dashboard without a reachable PostgreSQL database. "
+            "Set flow.store.dsn in config.yaml or GYRFALCON_DB_DSN. "
+            f"Details: {exc}"
+        ) from exc
+    finally:
+        if database is not None:
+            database.close()
+
 
     # Load plugins at startup, matching the CLI (cli.py) and the TUI gateway
     # (tui_gateway/server.py). Plugins register new agent capabilities (tools,
@@ -3517,6 +3732,11 @@ def run_dashboard():
     # gets its own directory rather than riding on the plugin mechanism.
     from gyrfalcon.flow.registry import discover_flows
     discover_flows()
+
+    # The visual daemon owns durable runs and deployment schedules.
+    from gyrfalcon.flow.visual_daemon import get_visual_daemon
+    visual_daemon = get_visual_daemon()
+    visual_daemon.start()
 
     config = load_config()
     host = config.get("web", {}).get("host", "127.0.0.1")
@@ -3537,4 +3757,9 @@ def run_dashboard():
     print(f"\n  {get_app_name()} Dashboard: http://{host}:{port}")
     print(f"  Session Token: {_session_token}\n")
 
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="warning")
+    finally:
+        visual_daemon.stop()
+        from gyrfalcon.db import dispose_database_pools
+        dispose_database_pools()

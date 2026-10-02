@@ -1,10 +1,9 @@
-"""Sessions, messages and per-call usage, on every configured backend.
+"""Sessions, messages and per-call usage on PostgreSQL.
 
 Spec: `docs/spec/gyrfalcon/19-tokenomics.md` §19.7.
 
-Runs against SQLite always, and PostgreSQL when `GYRFALCON_TEST_PG_DSN` is set
-— the two backends have genuinely different full-text machinery (FTS5 shadow
-table vs GIN over `to_tsvector`), so testing only one proves little.
+Runs against the disposable PostgreSQL database when `GYRFALCON_TEST_PG_DSN`
+is set.
 """
 
 import pytest
@@ -35,7 +34,7 @@ def store(store_target):
 
 class TestSchema:
     def test_migration_applied(self, store):
-        assert store.schema_version >= 7
+        assert store.schema_version == "0001_baseline"
 
 
 class TestSessions:

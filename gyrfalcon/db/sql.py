@@ -1,43 +1,15 @@
-"""The query catalog — every statement the flow stores run, in one place.
+"""Small SQL helpers retained by non-flow feature stores.
 
-Spec: §15.5.
-
-Why this file exists: with one backend, SQL scattered across `store.py`,
-`events.py`, and `deployments.py` was fine. With two, any statement is
-potentially dialect-sensitive, and three separate homes means portability gets
-re-audited in three places on every change. Collected here, the whole database
-surface is one file you can read top to bottom, and the handful of genuinely
-backend-specific statements are visibly exceptional rather than buried.
-
-What this is *not*: an ORM, or the beginnings of one (§15.3). These are strings
-and parameter orders. There are no row objects, no identity map, no query
-builder DSL. The stores keep every bit of behaviour — `record_transition`
-still decides what a transition *means*; it just stopped owning the text of
-the INSERT.
-
-Two rules keep it that way:
-
-1. This module imports nothing from `gyrfalcon.flow` outside `db/`. It has no
-   knowledge of `State`, `StateType`, or `FlowRun`. Callers pass values.
-2. A function appears here only when a statement must ask the `Dialect`, or
-   when its shape depends on a runtime count (an `IN (?,?,?)` list). Anything
-   that can be a constant is a constant.
-
-Consequence of rule 1 worth knowing: state-name lists (`TERMINAL_STATES` and
-friends) are *never* inlined as SQL literals here. They arrive as bound
-parameters from `states.py`, which is the single source of truth for them —
-so the §15.12 drift warning is answered by there being no second copy at all,
-rather than by this file holding the only one.
+Visual flow persistence uses SQLAlchemy Core tables and queries in
+``flow/runtime_store.py``. Retired ``@flow`` run, event, and deployment SQL is
+intentionally absent from this catalog.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from typing import Sequence
 
 from gyrfalcon.db.scope import Scope, merge
-
-if TYPE_CHECKING:
-    from gyrfalcon.db.base import Dialect
 
 
 def compose_where(scope: "Scope", clauses: Sequence[str] = (),
@@ -50,356 +22,27 @@ def compose_where(scope: "Scope", clauses: Sequence[str] = (),
     return merge(scope, clauses, table)
 
 
+def date_bucket(grain: str, expression: str) -> str:
+    if grain not in {"day", "week", "month", "quarter"}:
+        raise ValueError(f"unsupported date grain: {grain}")
+    if grain == "day":
+        return f"to_char(to_timestamp({expression}) AT TIME ZONE 'UTC', 'YYYY-MM-DD')"
+    fmt = 'IYYY-"W"IW' if grain == "week" else "YYYY-MM" if grain == "month" else 'YYYY-"Q"Q'
+    return f"to_char(date_trunc('{grain}', to_timestamp({expression}) AT TIME ZONE 'UTC'), '{fmt}')"
+
+
 def placeholders(n: int) -> str:
     """`?,?,?` for an IN list of `n` bound values.
 
-    Portable as-is: pg8000 is configured with `paramstyle = "qmark"`, so `?`
-    is the placeholder on both backends and this needs no dialect (§15.3a).
+    StoreConnection binds these placeholders through SQLAlchemy named parameters.
     """
     return ",".join("?" * n)
 
 
-# Database-backed graph definitions (§18.3). These are tenant configuration,
-# so owner scopes narrow to the tenant before composing each read.
-INSERT_GRAPH_DEFINITION = (
-    "INSERT INTO fnd_flow_definitions "
-    "(id, tenant_id, user_id, name, draft, created_at, updated_at) "
-    "VALUES (?,?,?,?,?,?,?)"
-)
-UPDATE_GRAPH_DRAFT = "UPDATE fnd_flow_definitions SET draft = ?, updated_at = ? WHERE tenant_id = ? AND id = ?"
-DELETE_GRAPH_VERSIONS = "DELETE FROM fnd_flow_definition_versions WHERE tenant_id = ? AND definition_id = ?"
-DELETE_GRAPH_DEFINITION = "DELETE FROM fnd_flow_definitions WHERE tenant_id = ? AND id = ?"
-INSERT_GRAPH_VERSION = (
-    "INSERT INTO fnd_flow_definition_versions "
-    "(tenant_id, definition_id, version, graph, published_at) VALUES (?,?,?,?,?)"
-)
-
-
-def graph_definition(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope.tenant_wide(), ["id = ?"])
-    return f"SELECT * FROM fnd_flow_definitions {where}", params
-
-
-def graph_definitions(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope.tenant_wide())
-    return f"SELECT * FROM fnd_flow_definitions {where} ORDER BY name", params
-
-
-def graph_version(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope.tenant_wide(), ["definition_id = ?", "version = ?"])
-    return f"SELECT * FROM fnd_flow_definition_versions {where}", params
-
-
-def latest_graph_version(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope.tenant_wide(), ["definition_id = ?"])
-    return f"SELECT MAX(version) AS version FROM fnd_flow_definition_versions {where}", params
-
-
-def graph_versions(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope.tenant_wide(), ["definition_id = ?"])
-    return f"SELECT version, published_at FROM fnd_flow_definition_versions {where} ORDER BY version DESC", params
-
-
-BIND_RUN_GRAPH = (
-    "UPDATE fnd_flow_runs SET definition_id = ?, definition_version = ? "
-    "WHERE id = ? AND tenant_id = ?"
-)
-
-
-# ==========================================================================
-# flow_runs  (store.py)
-# ==========================================================================
-
-RUN_COLUMNS = (
-    "id", "name", "kind", "state_type", "state_name", "parameters",
-    "parent_run_id", "flow_run_id", "tags", "created_at", "updated_at",
-    "owner_id", "heartbeat_at", "user_id", "tenant_id",
-)
-
-
-def insert_run(d: "Dialect") -> str:
-    """New run rows are idempotent: the engine may re-enter a run body after a
-    pause or a retry, and re-creating an existing row must be a no-op."""
-    return d.insert_ignore("fnd_flow_runs", RUN_COLUMNS, conflict="id")
-
-
-def get_run(scope: "Scope") -> tuple[str, tuple]:
-    """One run by id — scoped, because an id is guessable-adjacent and
-    "fetch by primary key" is exactly where a forgotten filter hides."""
-    where, params = compose_where(scope, ["id = ?"])
-    return f"SELECT * FROM fnd_flow_runs {where}", params
-
-
-def run_kind_and_name(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope, ["id = ?"])
-    return f"SELECT kind, name FROM fnd_flow_runs {where}", params
-
-
-def counts_by_state(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope)
-    return (
-        f"SELECT state_type, COUNT(*) AS c FROM fnd_flow_runs {where} GROUP BY state_type",
-        params,
-    )
-
-
-def runs_created_since(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope, ["created_at >= ?"])
-    return f"SELECT state_type, created_at FROM fnd_flow_runs {where}", params
-
-
-def graph_nodes(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(
-        scope, ["(id = ? OR flow_run_id = ? OR parent_run_id = ?)"]
-    )
-    return f"SELECT * FROM fnd_flow_runs {where}", params
-
-APPLY_TRANSITION = """
-    UPDATE fnd_flow_runs
-       SET state_type   = ?,
-           state_name   = ?,
-           updated_at   = ?,
-           started_at   = COALESCE(started_at, ?),
-           finished_at  = ?,
-           result       = COALESCE(?, result),
-           error        = COALESCE(?, error),
-           owner_id     = ?,
-           heartbeat_at = ?
-     WHERE id = ?
-"""
-
-MARK_CRASHED = """
-    UPDATE fnd_flow_runs
-       SET state_type = ?, state_name = ?, updated_at = ?, finished_at = ?, error = ?
-     WHERE id = ?
-"""
-
-
-# ── ownership and liveness (§15.6.1) ──────────────────────────────────────
-
-#: Refresh the heartbeat on every run this instance still owns. One statement
-#: per interval regardless of how many runs are in flight.
-TOUCH_OWNED_RUNS = """
-    UPDATE fnd_flow_runs SET heartbeat_at = ?
-     WHERE owner_id = ? AND finished_at IS NULL
-"""
-
-#: Clean shutdown: drop ownership so a peer can reclaim immediately rather
-#: than waiting out the stale threshold. Unclean death skips this, which is
-#: exactly what the threshold is for.
-RELEASE_OWNED_RUNS = """
-    UPDATE fnd_flow_runs SET owner_id = NULL, heartbeat_at = NULL
-     WHERE owner_id = ? AND finished_at IS NULL
-"""
-
-
-def abandoned_runs(scope: "Scope", n_states: int) -> tuple[str, tuple]:
-    """Non-terminal runs no live engine is heartbeating.
-
-    The `heartbeat_at IS NULL OR heartbeat_at < ?` test is the whole fix for
-    §15.6.1: a peer's *live* run has a fresh heartbeat and is left alone, so a
-    second process starting no longer marks another machine's work Crashed.
-
-    Normally called with `Scope.system(...)`: reconciliation settles abandoned
-    work in every tenant, because a crashed process took its tenants' runs
-    down with it regardless of who owned them.
-    """
-    where, params = compose_where(
-        scope,
-        [f"state_type IN ({placeholders(n_states)})",
-         "(heartbeat_at IS NULL OR heartbeat_at < ?)"],
-    )
-    return f"SELECT id FROM fnd_flow_runs {where}", params
-
-
-def runs_in_states(scope: "Scope", n: int) -> tuple[str, tuple]:
-    """Run ids currently sitting in any of `n` given states.
-
-    The states themselves come from `states.py`.
-    """
-    where, params = compose_where(scope, [f"state_type IN ({placeholders(n)})"])
-    return f"SELECT id FROM fnd_flow_runs {where}", params
-
-
-def count_active_by_name(scope: "Scope", n_terminal: int) -> tuple[str, tuple]:
-    """Exact-name count of non-terminal runs, for concurrency limits.
-
-    Exact `name = ?` rather than the `LIKE %name%` the search UI uses: a fuzzy
-    match would over-count `ingest` against `ingest_v2` and throttle a flow
-    that never hit its limit.
-    """
-    where, params = compose_where(
-        scope, ["name = ?", f"state_type NOT IN ({placeholders(n_terminal)})"]
-    )
-    return f"SELECT COUNT(*) AS c FROM fnd_flow_runs {where}", params
-
-
-def count_active_for_tenant(scope: "Scope", n_terminal: int) -> tuple[str, tuple]:
-    """Non-terminal runs anywhere in the caller's tenant (§17.8).
-
-    Deliberately not per flow name: the noisy-neighbour cap is about a tenant's
-    total footprint, which is what `count_active_by_name` cannot see.
-    """
-    where, params = compose_where(
-        scope, [f"state_type NOT IN ({placeholders(n_terminal)})"]
-    )
-    return f"SELECT COUNT(*) AS c FROM fnd_flow_runs {where}", params
-
-
-def list_runs(where: str) -> str:
-    """`where` comes from `compose_where`; the store never builds one itself."""
-    return f"SELECT * FROM fnd_flow_runs {where} ORDER BY created_at DESC LIMIT ? OFFSET ?"
-
-
-def count_runs(where: str) -> str:
-    return f"SELECT COUNT(*) AS c FROM fnd_flow_runs {where}"
-
-
-def delete_run(scope: "Scope") -> tuple[str, tuple]:
-    """Scoped for the same reason `get_run` is (§17.5): a delete by bare id
-    would let one tenant's request remove another tenant's row."""
-    where, params = compose_where(scope, ["id = ?"])
-    return f"DELETE FROM fnd_flow_runs {where}", params
-
-
-# ==========================================================================
-# flow_run_states — the transition audit trail
-# ==========================================================================
-
-NEXT_SEQ = "SELECT COALESCE(MAX(seq), 0) AS s FROM fnd_flow_run_states WHERE run_id = ?"
-
-INSERT_RUN_STATE = """
-    INSERT INTO fnd_flow_run_states
-        (run_id, seq, state_type, state_name, message, state_details, orchestration, at)
-    VALUES (?,?,?,?,?,?,?,?)
-"""
-
-GET_HISTORY = "SELECT * FROM fnd_flow_run_states WHERE run_id = ? ORDER BY seq"
-DELETE_HISTORY = "DELETE FROM fnd_flow_run_states WHERE run_id = ?"
-
-
-# ==========================================================================
-# flow_run_edges — the run graph
-# ==========================================================================
-
-EDGE_COLUMNS = ("downstream", "upstream", "kind")
-
-
-def insert_edge(d: "Dialect") -> str:
-    """The same dependency can be observed more than once (a task awaited
-    twice); recording it again must not raise."""
-    return d.insert_ignore("fnd_flow_run_edges", EDGE_COLUMNS, conflict="downstream, upstream, kind")
-
-
-def edges_for(n_ids: int) -> str:
-    return f"SELECT * FROM fnd_flow_run_edges WHERE downstream IN ({placeholders(n_ids)})"
-
-
-DELETE_EDGES_FOR = "DELETE FROM fnd_flow_run_edges WHERE downstream = ? OR upstream = ?"
-
-
-# ==========================================================================
-# flow_events  (events.py, §10)
-# ==========================================================================
-
-INSERT_EVENT = """
-    INSERT INTO fnd_flow_events
-        (id, occurred, event, resource_id, resource, related, payload, follows,
-         user_id, tenant_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?)
-"""
-
-def get_event(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope, ["id = ?"])
-    return f"SELECT * FROM fnd_flow_events {where}", params
-
-
-def list_events(where: str) -> str:
-    return f"SELECT * FROM fnd_flow_events {where} ORDER BY occurred DESC LIMIT ? OFFSET ?"
-
-
-def count_events(where: str) -> str:
-    return f"SELECT COUNT(*) AS c FROM fnd_flow_events {where}"
-
-
-# ==========================================================================
-# flow_deployments  (deployments.py, §9.1)
-# ==========================================================================
-
-INSERT_DEPLOYMENT = """
-    INSERT INTO fnd_flow_deployments
-        (id, name, flow_name, schedule_raw, schedule, parameters, tags,
-         concurrency_limit, enforce_parameter_schema, paused, next_run_at,
-         created_at, updated_at, user_id, tenant_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-"""
-
-def get_deployment(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope, ["id = ?"])
-    return f"SELECT * FROM fnd_flow_deployments {where}", params
-
-
-def get_deployment_by_name(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope, ["name = ?"])
-    return f"SELECT * FROM fnd_flow_deployments {where}", params
-
-
-def list_deployments(scope: "Scope") -> tuple[str, tuple]:
-    where, params = compose_where(scope)
-    return f"SELECT * FROM fnd_flow_deployments {where} ORDER BY name", params
-DELETE_DEPLOYMENT = "DELETE FROM fnd_flow_deployments WHERE id = ?"
-
-ADVANCE_SCHEDULE = (
-    "UPDATE fnd_flow_deployments SET next_run_at = ?, updated_at = ? WHERE id = ?"
-)
-
-#: Compare-and-swap claim (§15.6.2). Advancing `next_run_at` only if it still
-#: holds the value we read *is* the claim: exactly one racer's UPDATE reports
-#: a row, and the losers see rowcount 0 and skip the tick. Identical on both
-#: backends, which `FOR UPDATE SKIP LOCKED` would not have been.
-CLAIM_DEPLOYMENT = """
-    UPDATE fnd_flow_deployments SET next_run_at = ?, updated_at = ?
-     WHERE id = ? AND next_run_at = ?
-"""
-
-#: The same claim for a deployment with no scheduled time (an unscheduled or
-#: manually-fired one). `= ?` can never match NULL, so without this branch such
-#: a deployment would be dropped by every claim — silently, which is the worst
-#: way for a scheduler to fail. `IS NULL` is standard on both backends;
-#: `IS ?` is not (PostgreSQL spells that `IS NOT DISTINCT FROM`).
-CLAIM_UNSCHEDULED_DEPLOYMENT = """
-    UPDATE fnd_flow_deployments SET next_run_at = ?, updated_at = ?
-     WHERE id = ? AND next_run_at IS NULL
-"""
-
-SET_PAUSED = (
-    "UPDATE fnd_flow_deployments SET paused = ?, next_run_at = ?, updated_at = ? WHERE id = ?"
-)
-
-#: Editing a deployment (name/schedule/parameters/tags/concurrency), not its
-#: run-time bookkeeping (`paused`, `next_run_at` are untouched here — a
-#: schedule *string* change recomputes `next_run_at` in Python, same as
-#: `create`, and is passed in explicitly rather than derived in SQL).
-UPDATE_DEPLOYMENT = """
-    UPDATE fnd_flow_deployments
-       SET name = ?, schedule_raw = ?, schedule = ?, parameters = ?, tags = ?,
-           concurrency_limit = ?, next_run_at = ?, updated_at = ?
-     WHERE id = ?
-"""
-
-
-def select_due_deployments(d: "Dialect", where: str = "") -> str:
-    """Rows a runner intends to claim and fire.
-
-    On PostgreSQL this must skip rows another runner has already locked, or
-    two processes fire the same deployment on the same tick (§15.6). SQLite
-    has no such clause and needs none — its single write lock already
-    serializes the claim.
-    """
-    sql = f"SELECT * FROM fnd_flow_deployments {where} ORDER BY name"
-    if d.supports_skip_locked:
-        sql += " FOR UPDATE SKIP LOCKED"
-    return sql
+def insert_ignore(table: str, columns: Sequence[str], conflict: str) -> str:
+    cols = ", ".join(columns)
+    vals = ",".join("?" * len(columns))
+    return f"INSERT INTO {table} ({cols}) VALUES ({vals}) ON CONFLICT ({conflict}) DO NOTHING"
 
 
 # ==========================================================================

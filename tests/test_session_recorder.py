@@ -20,7 +20,6 @@ def fresh(tmp_path, monkeypatch):
     from gyrfalcon.gyrfalcon_constants import get_gyrfalcon_home
 
     monkeypatch.setenv("GYRFALCON_HOME", str(tmp_path))
-    monkeypatch.setenv("RUN_MODE", "CLIENT")
     get_gyrfalcon_home.cache_clear()
     recorder.reset_for_tests()
     monkeypatch.setattr("gyrfalcon.sessions.store._store", None, raising=False)

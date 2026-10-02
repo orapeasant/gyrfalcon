@@ -1,0 +1,170 @@
+[
+  {
+    "name": "workflow",
+    "png": "png/workflow.png",
+    "ico": "ico/workflow.ico",
+    "svg": "svg/workflow.svg"
+  },
+  {
+    "name": "progress",
+    "png": "png/progress.png",
+    "ico": "ico/progress.ico",
+    "svg": "svg/progress.svg"
+  },
+  {
+    "name": "process",
+    "png": "png/process.png",
+    "ico": "ico/process.ico",
+    "svg": "svg/process.svg"
+  },
+  {
+    "name": "scheme",
+    "png": "png/scheme.png",
+    "ico": "ico/scheme.ico",
+    "svg": "svg/scheme.svg"
+  },
+  {
+    "name": "checklist",
+    "png": "png/checklist.png",
+    "ico": "ico/checklist.ico",
+    "svg": "svg/checklist.svg"
+  },
+  {
+    "name": "steps",
+    "png": "png/steps.png",
+    "ico": "ico/steps.ico",
+    "svg": "svg/steps.svg"
+  },
+  {
+    "name": "automation",
+    "png": "png/automation.png",
+    "ico": "ico/automation.ico",
+    "svg": "svg/automation.svg"
+  },
+  {
+    "name": "planning",
+    "png": "png/planning.png",
+    "ico": "ico/planning.ico",
+    "svg": "svg/planning.svg"
+  },
+  {
+    "name": "diagram",
+    "png": "png/diagram.png",
+    "ico": "ico/diagram.ico",
+    "svg": "svg/diagram.svg"
+  },
+  {
+    "name": "development",
+    "png": "png/development.png",
+    "ico": "ico/development.ico",
+    "svg": "svg/development.svg"
+  },
+  {
+    "name": "milestones",
+    "png": "png/milestones.png",
+    "ico": "ico/milestones.ico",
+    "svg": "svg/milestones.svg"
+  },
+  {
+    "name": "system",
+    "png": "png/system.png",
+    "ico": "ico/system.ico",
+    "svg": "svg/system.svg"
+  },
+  {
+    "name": "organization",
+    "png": "png/organization.png",
+    "ico": "ico/organization.ico",
+    "svg": "svg/organization.svg"
+  },
+  {
+    "name": "gear",
+    "png": "png/gear.png",
+    "ico": "ico/gear.ico",
+    "svg": "svg/gear.svg"
+  },
+  {
+    "name": "integration",
+    "png": "png/integration.png",
+    "ico": "ico/integration.ico",
+    "svg": "svg/integration.svg"
+  },
+  {
+    "name": "operation",
+    "png": "png/operation.png",
+    "ico": "ico/operation.ico",
+    "svg": "svg/operation.svg"
+  },
+  {
+    "name": "task",
+    "png": "png/task.png",
+    "ico": "ico/task.ico",
+    "svg": "svg/task.svg"
+  },
+  {
+    "name": "management",
+    "png": "png/management.png",
+    "ico": "ico/management.ico",
+    "svg": "svg/management.svg"
+  },
+  {
+    "name": "project",
+    "png": "png/project.png",
+    "ico": "ico/project.ico",
+    "svg": "svg/project.svg"
+  },
+  {
+    "name": "flowchart",
+    "png": "png/flowchart.png",
+    "ico": "ico/flowchart.ico",
+    "svg": "svg/flowchart.svg"
+  },
+  {
+    "name": "collaboration",
+    "png": "png/collaboration.png",
+    "ico": "ico/collaboration.ico",
+    "svg": "svg/collaboration.svg"
+  },
+  {
+    "name": "procedure",
+    "png": "png/procedure.png",
+    "ico": "ico/procedure.ico",
+    "svg": "svg/procedure.svg"
+  },
+  {
+    "name": "timeline",
+    "png": "png/timeline.png",
+    "ico": "ico/timeline.ico",
+    "svg": "svg/timeline.svg"
+  },
+  {
+    "name": "schedule",
+    "png": "png/schedule.png",
+    "ico": "ico/schedule.ico",
+    "svg": "svg/schedule.svg"
+  },
+  {
+    "name": "chat",
+    "png": "png/chat.png",
+    "ico": "ico/chat.ico",
+    "svg": "svg/chat.svg"
+  },
+  {
+    "name": "notify-approved",
+    "png": "png/notify-approved.png",
+    "ico": "ico/notify-approved.ico",
+    "svg": "svg/notify-approved.svg"
+  },
+  {
+    "name": "notify-alert",
+    "png": "png/notify-alert.png",
+    "ico": "ico/notify-alert.ico",
+    "svg": "svg/notify-alert.svg"
+  },
+  {
+    "name": "notify-rejected",
+    "png": "png/notify-rejected.png",
+    "ico": "ico/notify-rejected.ico",
+    "svg": "svg/notify-rejected.svg"
+  }
+]

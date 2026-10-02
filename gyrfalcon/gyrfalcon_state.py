@@ -35,9 +35,13 @@ class SessionDB(SessionStore):
         model: str | None = None, system_prompt: str | None = None,
         user_id: str | None = None, parent_session_id: str | None = None,
         title: str | None = None, agent_id: str | None = None,
+        flow_run_status_id: str | None = None,
+        flow_node_status_id: str | None = None,
     ) -> str:
         return super().create_session(session_id, source, model, system_prompt,
-                                      agent_id, parent_session_id, title, self._scope(user_id))
+                                      agent_id, parent_session_id, title, self._scope(user_id),
+                                      flow_run_status_id=flow_run_status_id,
+                                      flow_node_status_id=flow_node_status_id)
 
     def get_session(self, session_id: str, user_id: str | None = None) -> Optional[dict]:
         return self._session(super().get_session(session_id, scope=self._scope(user_id)))
@@ -117,7 +121,7 @@ class SessionDB(SessionStore):
             conn.execute(sql.SET_STATE_META, (key, value))
 
     def get_analytics(self, days: int = 30) -> list[dict]:
-        statement, params = sql.session_analytics(self._scope(), self.dialect.date_bucket("day", "started_at"))
+        statement, params = sql.session_analytics(self._scope(), sql.date_bucket("day", "started_at"))
         with self._db.connect() as conn:
             return [dict(row) for row in conn.fetchall(statement, (*params, time.time() - days * 86400))]
 

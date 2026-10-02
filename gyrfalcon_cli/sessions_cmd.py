@@ -10,16 +10,13 @@ logger = get_logger("sessions_cmd")
 
 
 def run_sessions_cli(action: str = "status", session_id: Optional[str] = None) -> None:
-    from gyrfalcon.gyrfalcon_constants import get_run_mode
     from gyrfalcon.sessions import get_session_store
 
     store = get_session_store()
     print("\nSession storage")
-    print(f"  run mode       : {get_run_mode()}")
     print(f"  backend        : {store.backend}")
     print(f"  schema version : {store.schema_version}")
-    print(f"  full-text index: "
-          f"{'yes' if store.dialect.supports_fulltext else 'no (LIKE fallback)'}")
+    print("  full-text index: yes")
 
     if session_id:
         rows = store.get_usage(session_id)

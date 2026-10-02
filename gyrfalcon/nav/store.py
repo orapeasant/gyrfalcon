@@ -2,7 +2,7 @@
 
 Spec: `17-users-roles-menus.md` §2.
 
-Shares the flow database, dialect layer and migration counter, like
+Shares the flow database and Alembic schema version, like
 `auth/store.py` — one DSN, one schema version, no way to end up with half of
 this subsystem present.
 
@@ -94,7 +94,7 @@ class NavStore:
         processes serving permissions that no longer exist.
         """
         now = time.time()
-        conn.execute(sql.insert_nav_version(self._db.dialect), (tenant_id, 0, now))
+        conn.execute(sql.insert_nav_version(), (tenant_id, 0, now))
         conn.execute(sql.BUMP_NAV_VERSION, (now, tenant_id))
 
     # -- pages (global) -----------------------------------------------------
@@ -104,7 +104,7 @@ class NavStore:
         page_id = _new_id()
         with self._db.connect() as conn:
             conn.execute(
-                sql.insert_page(self._db.dialect),
+                sql.insert_page(),
                 (page_id, key, route, label, icon, 1 if enabled else 0, time.time()),
             )
         found = self.get_page_by_key(key)
@@ -151,7 +151,7 @@ class NavStore:
         fn_id = _new_id()
         with self._db.connect() as conn:
             conn.execute(
-                sql.insert_function(self._db.dialect),
+                sql.insert_function(),
                 (fn_id, key, name, icon, kind, target,
                  json.dumps(params) if params else None,
                  1 if enabled else 0, active_from, active_to, now, now, tenant),
@@ -218,7 +218,7 @@ class NavStore:
         menu_id = menu_id or _new_id()
         with self._db.connect() as conn:
             conn.execute(
-                sql.insert_menu(self._db.dialect),
+                sql.insert_menu(),
                 (menu_id, name, icon, 1 if enabled else 0, active_from,
                  active_to, now, now, _tenant_of(sc)),
             )
@@ -295,7 +295,7 @@ class NavStore:
         item_id = _new_id()
         with self._db.connect() as conn:
             conn.execute(
-                sql.insert_menu_item(self._db.dialect),
+                sql.insert_menu_item(),
                 (item_id, menu_id, sort_order, function_id, ref_menu_id, access,
                  label_override, icon_override, 1 if enabled else 0,
                  active_from, active_to, _tenant_of(sc)),
@@ -374,7 +374,7 @@ class NavStore:
         sc = current_scope(scope).tenant_wide()
         with self._db.connect() as conn:
             conn.execute(
-                sql.insert_role(self._db.dialect),
+                sql.insert_role(),
                 (_new_id(), name, label or name, menu_id, 1 if enabled else 0,
                  active_from, active_to, description, time.time(), _tenant_of(sc)),
             )

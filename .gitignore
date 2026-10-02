@@ -97,4 +97,6 @@ docs/spec/hermes/hermes.zip
 # Markdown (all .md ignored except README.md)
 *.md
 !README.md
+!AGENTS.md
+!FLOW_DESIGNER_DESIGN.md
 !docs/spec/gyrfalcon/21-multi-worker-runtime.md

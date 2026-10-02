@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import json
 from typing import Any, Optional
 
 from gyrfalcon.db import open_database, resolve_target, sql
@@ -52,10 +53,6 @@ class SessionStore:
                                  dsn=self.dsn)
         self.schema_version = ensure_schema(self._db)
 
-    @property
-    def dialect(self):
-        return self._db.dialect
-
     def close(self) -> None:
         self._db.close()
 
@@ -71,7 +68,12 @@ class SessionStore:
         parent_session_id: Optional[str] = None,
         title: Optional[str] = None,
         scope: Optional[Scope] = None,
+        *,
+        flow_run_status_id: Optional[str] = None,
+        flow_node_status_id: Optional[str] = None,
     ) -> str:
+        if flow_node_status_id and not flow_run_status_id:
+            raise ValueError("a flow node visit requires its flow run status ID")
         scope = scope or current_scope()
         tenant_id, user_id = _owner(scope)
         session_id = session_id or _new_id()
@@ -79,8 +81,9 @@ class SessionStore:
         with self._db.connect() as conn:
             conn.execute(sql.insert_session(), (
                 session_id, source, agent_id, model, parent_session_id, title,
-                system_prompt, now, None, now,
+                system_prompt, now, None, "created", None, now,
                 0, 0, 0, 0, 0, 0.0, user_id, tenant_id, user_id,
+                flow_run_status_id, flow_node_status_id,
             ))
         return session_id
 
@@ -162,18 +165,32 @@ class SessionStore:
         tool_name: Optional[str] = None,
         reasoning: Optional[str] = None,
         scope: Optional[Scope] = None,
+        *,
+        flow_node_status_id: Optional[str] = None,
+        message_kind: Optional[str] = None,
+        channel: Optional[str] = None,
+        direction: Optional[str] = None,
     ) -> str:
         scope = scope or current_scope()
         tenant_id, user_id = _owner(scope)
         message_id = _new_id()
         seq_sql, seq_params = sql.next_message_seq(scope)
         with self._db.connect() as conn:
+            session_sql, session_params = sql.get_session(scope)
+            session = conn.fetchone(session_sql, (*session_params, session_id))
+            if session is None:
+                raise KeyError(f"Session {session_id!r} is unavailable")
+            owner_visit = session["flow_node_status_id"]
+            if flow_node_status_id is not None and flow_node_status_id != owner_visit:
+                raise ValueError("Message node visit does not match its session")
             row = conn.fetchone(seq_sql, (*seq_params, session_id))
             seq = int(row["next"]) if row else 0
             conn.execute(sql.insert_session_message(), (
                 message_id, session_id, seq, role, content, tool_call_id,
                 tool_calls, tool_name, reasoning, time.time(),
-                user_id, tenant_id,
+                user_id, tenant_id, owner_visit,
+                message_kind or ("agent_turn" if owner_visit else "chat"),
+                channel or "chat", direction,
             ))
             touch, touch_params = sql.touch_session(scope)
             conn.execute(touch, (time.time(), *touch_params, session_id))
@@ -187,6 +204,40 @@ class SessionStore:
             rows = conn.fetchall(statement, (*params, session_id))
         return [dict(r) for r in rows]
 
+    def append_flow_message(
+        self, session_id: str, visit_id: str, *, content: str,
+        message_kind: str, channel: str, direction: str,
+        subject: str | None = None, sender: str | None = None,
+        recipients: dict | list | None = None, body_html: str | None = None,
+        external_message_id: str | None = None, in_reply_to: str | None = None,
+        headers: dict | None = None, attachment_refs: list | None = None,
+        scope: Optional[Scope] = None,
+    ) -> str:
+        """Write a flow Notification or response with email-capable metadata."""
+        scope = scope or current_scope()
+        tenant_id, user_id = _owner(scope)
+        message_id = _new_id()
+        session_sql, session_params = sql.get_session(scope)
+        seq_sql, seq_params = sql.next_message_seq(scope)
+        with self._db.connect() as conn:
+            session = conn.fetchone(session_sql, (*session_params, session_id))
+            if session is None or session["flow_node_status_id"] != visit_id:
+                raise ValueError("Message must belong to its flow node session")
+            row = conn.fetchone(seq_sql, (*seq_params, session_id))
+            seq = int(row["next"]) if row else 0
+            conn.execute(
+                sql.insert_flow_session_message(),
+                (message_id, session_id, seq, "notification", content, time.time(),
+                 user_id, tenant_id, visit_id, message_kind, channel, direction,
+                 subject, sender, json.dumps(recipients) if recipients is not None else None,
+                 body_html, external_message_id, in_reply_to,
+                 json.dumps(headers) if headers is not None else None,
+                 json.dumps(attachment_refs) if attachment_refs is not None else None),
+            )
+            touch, touch_params = sql.touch_session(scope)
+            conn.execute(touch, (time.time(), *touch_params, session_id))
+        return message_id
+
     # -- search -------------------------------------------------------------
 
     def search_messages(self, query: str, limit: int = 10,
@@ -196,13 +247,11 @@ class SessionStore:
         Uses PostgreSQL full text search over message content.
         """
         scope = scope or current_scope()
-        dialect = self.dialect
-        match = dialect.fulltext_match("m", "content")
+        match = "to_tsvector('simple', coalesce(ai_session_messages.content, '')) @@ plainto_tsquery('simple', ?)"
         statement, params = sql.search_messages(scope, match)
-        term = dialect.fulltext_term(query)
         try:
             with self._db.connect() as conn:
-                rows = conn.fetchall(statement, (*params, term, limit))
+                rows = conn.fetchall(statement, (*params, query, limit))
             return [dict(r) for r in rows]
         except Exception as err:
             # A malformed query reaching the matcher must not 500 a search box.
@@ -289,7 +338,7 @@ class SessionStore:
     ) -> list[dict]:
         """Read scoped, aggregated per-call usage for the Tokenomics report."""
         scope = scope or current_scope()
-        period = self.dialect.date_bucket(grain, "u.created_at")
+        period = sql.date_bucket(grain, "u.created_at")
         statement, params = sql.tokenomics_report(scope, period, dimension, pivot)
         with self._db.connect() as conn:
             rows = conn.fetchall(statement, (*params, start_at, end_at))
