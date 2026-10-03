@@ -229,6 +229,7 @@ FLOW_RT_NODE_STATUSES = Table(
         Column("attempt", "INTEGER", "NOT NULL DEFAULT 1"),
         Column("state", "TEXT", "NOT NULL"),
         Column("input_value", "JSONB"),
+        Column("context_snapshot", "JSONB"),
         Column("output_value", "JSONB"),
         Column("transient", "TEXT"),
         Column("error", "JSONB"),

@@ -406,11 +406,11 @@ export function SkillsPage() {
                     {deleteConfirm === selected?.name ? (
                       <>
                         <span style={{ fontSize: '0.8rem', color: 'var(--color-muted)' }}>Delete?</span>
-                        <button onClick={() => deleteSkill(selected!.name)} style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', cursor: 'pointer', fontSize: '0.8rem' }}>Yes</button>
+                        <button onClick={() => deleteSkill(selected!.name)} style={{ background: 'var(--danger-action-bg)', color: 'var(--danger-action-fg)', border: 'none', borderRadius: '8px', padding: '4px 10px', cursor: 'pointer', fontSize: '0.8rem' }}>Yes</button>
                         <button onClick={() => setDeleteConfirm(null)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.8rem', color: 'var(--color-foreground)' }}>No</button>
                       </>
                     ) : (
-                      <button onClick={() => setDeleteConfirm(selected?.name ?? null)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.8rem', color: '#ef4444', display: 'flex', alignItems: 'center' }}>
+                      <button onClick={() => setDeleteConfirm(selected?.name ?? null)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.8rem', color: 'var(--red)', display: 'flex', alignItems: 'center' }}>
                         <Trash2 size={13} />
                       </button>
                     )}
@@ -420,7 +420,7 @@ export function SkillsPage() {
 
               {/* Save message */}
               {saveMsg && (
-                <span style={{ fontSize: '0.8rem', color: saveMsg.ok ? '#22c55e' : '#ef4444' }}>
+                <span style={{ fontSize: '0.8rem', color: saveMsg.ok ? 'var(--green)' : 'var(--red)' }}>
                   {saveMsg.ok ? '✓' : '✗'} {saveMsg.text}
                 </span>
               )}
@@ -475,11 +475,11 @@ export function SkillsPage() {
                           <span style={{ fontSize: '0.65rem', color: 'var(--fg-muted)', flexShrink: 0 }}>{fmtSize(f.size)}</span>
                           {deletingFile === f.name ? (
                             <span style={{ display: 'flex', gap: '3px' }}>
-                              <button onClick={e => { e.stopPropagation(); deleteFile(f.name); }} style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '3px', padding: '1px 5px', cursor: 'pointer', fontSize: '0.7rem' }}>✓</button>
+                              <button onClick={e => { e.stopPropagation(); deleteFile(f.name); }} style={{ background: 'var(--danger-action-bg)', color: 'var(--danger-action-fg)', border: 'none', borderRadius: '6px', padding: '1px 5px', cursor: 'pointer', fontSize: '0.7rem' }}>✓</button>
                               <button onClick={e => { e.stopPropagation(); setDeletingFile(null); }} style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: '3px', padding: '1px 4px', cursor: 'pointer', fontSize: '0.7rem' }}>✗</button>
                             </span>
                           ) : (
-                            <button onClick={e => { e.stopPropagation(); setDeletingFile(f.name); }} title="Delete" style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>
+                            <button onClick={e => { e.stopPropagation(); setDeletingFile(f.name); }} title="Delete" style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>
                               <Trash2 size={11} />
                             </button>
                           )}
@@ -506,7 +506,7 @@ export function SkillsPage() {
                         <button onClick={saveFile} disabled={fileSaving || !fileDirty} style={{ background: fileDirty ? 'var(--btn-bg)' : 'var(--color-midground)', color: fileDirty ? 'var(--btn-fg)' : 'var(--color-muted)', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '3px 10px', cursor: fileSaving || !fileDirty ? 'default' : 'pointer', fontSize: '0.82rem' }}>
                           {fileSaving ? 'Saving…' : 'Save'}
                         </button>
-                        {fileMsg && <span style={{ fontSize: '0.78rem', color: fileMsg.ok ? '#22c55e' : '#ef4444' }}>{fileMsg.ok ? '✓' : '✗'} {fileMsg.text}</span>}
+                        {fileMsg && <span style={{ fontSize: '0.78rem', color: fileMsg.ok ? 'var(--green)' : 'var(--red)' }}>{fileMsg.ok ? '✓' : '✗'} {fileMsg.text}</span>}
                       </div>
                       <textarea value={fileContent} onChange={e => { setFileContent(e.target.value); setFileDirty(true); setFileMsg(null); }}
                         spellCheck={false} style={{ flex: 1, width: '100%', resize: 'none', border: 'none', outline: 'none', padding: '1rem', fontFamily: 'Consolas, "Courier New", monospace', fontSize: '0.83rem', lineHeight: '1.6', background: 'var(--color-background)', color: 'var(--color-foreground)', boxSizing: 'border-box' }}

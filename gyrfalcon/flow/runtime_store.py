@@ -6,6 +6,7 @@ import hashlib
 import json
 import time
 import uuid
+from copy import deepcopy
 from typing import Any, Mapping
 
 from sqlalchemy import String, and_, func, insert, or_, select, update
@@ -301,9 +302,17 @@ class FlowRuntimeStore:
         return row
 
     def delete_deployment(self, deployment_id: str) -> bool:
-        """Delete a deployment only when no persisted run references it."""
+        """Delete a deployment while preserving historical runs.
+
+        Runs keep their deployment id in ``trigger_ref`` for audit/display, but
+        the optional FK column must be cleared before removing the deployment.
+        """
         t = FLOW_DT_DEPLOYMENTS
         with self.db.connect() as conn:
+            conn.connection.execute(update(FLOW_RT_STATUSES).where(
+                FLOW_RT_STATUSES.c.tenant_id == self.tenant_id,
+                FLOW_RT_STATUSES.c.deployment_id == deployment_id,
+            ).values(deployment_id=None))
             result = conn.connection.execute(t.delete().where(self._tenant(t),
                 t.c.id == deployment_id))
             return result.rowcount == 1
@@ -431,9 +440,22 @@ class FlowRuntimeStore:
                 n.c.state.in_(("failed", "crashed"))).order_by(n.c.visit_seq.desc()).limit(1)))
             if not frames or failed_visit is None:
                 raise ValueError("This run has no saved failed node to retry")
+            checkpoint = failed_visit.get("context_snapshot") or {}
+            restored_context = deepcopy(checkpoint.get("run_context", run.get("context") or {}))
+            restored_loop_state = checkpoint.get("loop_state", run.get("loop_state") or {})
+            if failed_visit.get("context_snapshot"):
+                restored_context["_retry_checkpoint"] = {
+                    "node_path": failed_path,
+                    "activity_context": {
+                        key: deepcopy(checkpoint.get(key))
+                        for key in ("incoming_value", "inputs", "outputs",
+                                    "flow_attributes", "attributes")
+                    },
+                }
             return _row(conn.connection.execute(update(r).where(self._scope(r),
                 r.c.id == run_id, r.c.state.in_(("failed", "crashed"))).values(
                     state="queued", error=None, result=None, finished_at=None,
+                    context=restored_context, loop_state=restored_loop_state,
                     lease_owner=None, lease_until=None, updated_at=now).returning(r)))
 
     def delete_run(self, run_id: str) -> bool | None:
@@ -588,6 +610,7 @@ class FlowRuntimeStore:
 
     def create_node_visit(self, run_id: str, node_path: str, node_id: str,
                           node_kind: str, *, input_value: Any = None,
+                          context_snapshot: Any = None,
                           state: str = "running", attempt: int | None = None,
                           visit_id: str | None = None) -> dict:
         n, r = FLOW_RT_NODE_STATUSES, FLOW_RT_STATUSES
@@ -608,15 +631,16 @@ class FlowRuntimeStore:
                           environment_id=self.environment_id, run_id=run_id,
                           node_path=node_path, node_id=node_id, node_kind=node_kind,
                           visit_seq=seq, attempt=attempt, state=state,
+                          context_snapshot=context_snapshot,
                           input_value=input_value, started_at=now, updated_at=now)
             conn.connection.execute(insert(n).values(**values))
             return values
 
     def update_node_visit(self, visit_id: str, **fields) -> dict:
-        allowed = {"state", "output_value", "transient", "error", "wait_deadline",
+        allowed = {"state", "input_value", "context_snapshot", "output_value", "transient", "error", "wait_deadline",
                    "timeout_transient",
                    "response_value", "response_user_id", "ai_session_id",
-                   "input_value", "attempt"}
+                   "attempt"}
         if not fields or set(fields) - allowed:
             raise ValueError("invalid node visit fields")
         n = FLOW_RT_NODE_STATUSES

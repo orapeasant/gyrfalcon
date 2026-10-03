@@ -32,10 +32,10 @@ export function ProfilesPage() {
     loadProfiles();
   }
 
-  if (loading) return <div className="p-4">Loading profiles...</div>;
+  if (loading) return <div>Loading profiles...</div>;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}><h1 className="text-2xl font-bold">Provider Profiles</h1><CollectionViewToggle view={view} onChange={setView} label="Profile view" /></div>
 
       <div style={collectionStyle(view)}>

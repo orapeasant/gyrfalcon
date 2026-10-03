@@ -53,9 +53,9 @@ function ToolChip({ tool }: { tool: ToolCall }) {
         display: "inline-flex", alignItems: "center", gap: "4px",
         padding: "2px 8px", borderRadius: "10px",
         fontSize: "0.78rem", fontWeight: 600, fontFamily: "monospace", flexShrink: 0,
-        background: tool.read_only ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
-        border: `1px solid ${tool.read_only ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
-        color: tool.read_only ? "#22c55e" : "#ef4444",
+        background: tool.read_only ? "var(--success-bg)" : "var(--error-bg)",
+        border: `1px solid ${tool.read_only ? "var(--green)" : "var(--red)"}`,
+        color: tool.read_only ? "var(--green)" : "var(--red)",
       }}>
         {tool.read_only ? "👁 read" : "✏️ write"}{" · "}{tool.name}
       </span>
@@ -215,6 +215,7 @@ export function ChatPage() {
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [resumedSessionId, setResumedSessionId] = useState<string | null>(null);
   const [resumedTitle, setResumedTitle] = useState<string>("");
+  const [resumedAgentSession, setResumedAgentSession] = useState(false);
   const [activeTool, setActiveTool] = useState<ToolCall | null>(null);
   // Tools used in the current turn. Kept in a ref as well as state because
   // message.complete has to read the final list from the same tick that the
@@ -390,6 +391,7 @@ export function ChatPage() {
             const title = msg.result.session?.title || "";
             setResumedSessionId(msg.result.session?.id || null);
             setResumedTitle(title);
+            setResumedAgentSession(!!msg.result.session?.agent_id);
             // Clear the ?session= param from URL so refresh starts fresh
             setSearchParams({});
             chatLogger.info(`Session resumed: ${history.length} messages loaded`, { title });
@@ -756,11 +758,12 @@ export function ChatPage() {
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* Resumed session banner */}
       {resumedSessionId && (
-        <div style={{ display:"flex", alignItems:"center", gap:"8px", padding:"7px 14px", background:"rgba(69,109,230,0.12)", border:"1px solid rgba(69,109,230,0.3)", borderRadius:"6px", marginBottom:"8px", fontSize:"12px", color:"#456DE6" }}>
-          <span>↩ Resumed session <code style={{ fontFamily:"monospace", background:"rgba(69,109,230,0.15)", padding:"1px 5px", borderRadius:"3px" }}>{resumedSessionId.slice(0,8)}</code>
+        <div style={{ display:"flex", alignItems:"center", gap:"8px", padding:"7px 14px", background:"color-mix(in srgb, var(--blue) 12%, var(--card))", border:"1px solid color-mix(in srgb, var(--blue) 30%, var(--border))", borderRadius:"8px", marginBottom:"8px", fontSize:"12px", color:"var(--blue)" }}>
+          <span>{resumedAgentSession ? "🤖 Agent session" : "↩ Resumed session"} <code style={{ fontFamily:"monospace", background:"color-mix(in srgb, var(--blue) 15%, var(--card))", padding:"1px 5px", borderRadius:"4px" }}>{resumedSessionId.slice(0,8)}</code>
           {resumedTitle && <span> — <strong>{resumedTitle}</strong></span>}
+          {resumedAgentSession && <span> · agent configuration active</span>}
           </span>
-          <button onClick={() => { setMessages([]); setResumedSessionId(null); setResumedTitle(""); }} style={{ marginLeft:"auto", background:"transparent", border:"none", color:"#456DE6", cursor:"pointer", fontSize:"11px", padding:"0" }}>✕ New session</button>
+          <button onClick={() => { setMessages([]); setResumedSessionId(null); setResumedTitle(""); setResumedAgentSession(false); }} style={{ marginLeft:"auto", background:"transparent", border:"none", color:"var(--blue)", cursor:"pointer", fontSize:"11px", padding:"0" }}>✕ New session</button>
         </div>
       )}
       {/* Header */}
@@ -899,11 +902,11 @@ export function ChatPage() {
                     padding: "0.2rem 0",
                     borderBottom: "1px solid var(--color-border)",
                     color: entry.direction === "send" 
-                      ? "#22c55e" 
+                      ? "var(--green)" 
                       : entry.direction === "receive" 
-                      ? "#3b82f6"
+                      ? "var(--blue)"
                       : entry.direction === "error"
-                      ? "#ef4444"
+                      ? "var(--red)"
                       : "var(--color-muted)",
                   }}
                 >
@@ -932,7 +935,7 @@ export function ChatPage() {
       {/* Error banner */}
       {error && (
         <div style={{
-          background: "rgba(239, 68, 68, 0.1)",
+          background: "var(--error-bg)",
           border: "1px solid var(--color-danger, #ef4444)",
           borderRadius: "4px",
           padding: "0.5rem 1rem",

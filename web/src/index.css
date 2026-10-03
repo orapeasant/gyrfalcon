@@ -3,128 +3,167 @@
 @tailwind utilities;
 
 :root {
-  /* ── Layout surfaces ──────────────────────────────────────────── */
-  --bg:              #09090b;
-  --sidebar-bg:      #0f0f11;
-  --sidebar-hover:   rgba(255, 255, 255, 0.04);
-  --sidebar-active:  rgba(255, 255, 255, 0.07);
-  --card:            #111113;
-  --input-bg:        #0f0f11;
+  color-scheme: light;
+  --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  --space: 4px;
+  --radius: 10px;
 
-  /* ── Text ─────────────────────────────────────────────────────── */
-  --fg:              #fafafa;
-  --fg-muted:        #71717a;
-  --fg-subtle:       #3f3f46;
+  /* Light work area and navigation rail. */
+  --bg: #f5f5f5;
+  --header-bg: #fff;
+  --sidebar-bg: #fff;
+  --sidebar-fg: #303032;
+  --sidebar-muted: #606164;
+  --sidebar-border: #e6e6e6;
+  --sidebar-hover: #f5f5f5;
+  --sidebar-active: #e8e8e8;
+  --nav-hover: #f5f5f5;
+  --nav-active: #e8e8e8;
+  --card: #fff;
+  --input-bg: #fff;
 
-  /* ── Accent (neutral — no orange) ────────────────────────────── */
-  --primary:         #fafafa;           /* same as --fg in dark */
-  --primary-dim:     rgba(255,255,255,0.07);  /* subtle grey highlight */
-  --blue:            #456DE6;
-  --green:           #22c55e;
-  --red:             #ef4444;
+  --fg: #303032;
+  --fg-muted: #606164;
+  --fg-subtle: #79797d;
+  --fg-disabled: #919295;
+  --primary: #707070;
+  --primary-dim: #e8e8e8;
+  --blue: #1c9be3;
+  --green: #25855a;
+  --red: #cd372c;
+  --warning: #da5d08;
+  --purple: #9e77ed;
+  --color-success: var(--green);
+  --color-info: var(--blue);
+  --color-warning: var(--warning);
+  --color-danger: var(--red);
+  --success-bg: #d7eed5;
+  --info-bg: #d2ebf9;
+  --warning-bg: #fdd7bd;
+  --error-bg: #fee8e6;
+  --danger-action-bg: #cd372c;
+  --danger-action-fg: #fff;
+  --overlay: rgb(0 0 0 / 48%);
+  --shadow-popover: 0 8px 24px rgb(24 24 24 / 12%);
 
-  /* ── Borders ──────────────────────────────────────────────────── */
-  --border:          rgba(255, 255, 255, 0.07);
-  --border-focus:    rgba(255, 255, 255, 0.35);
+  --border: #e6e6e6;
+  --border-subtle: #dcdcde;
+  --border-focus: #707070;
+  --selection: #e8e8e8;
+  --tooltip-bg: #303032;
+  --tooltip-fg: #f5f5f5;
+  --shadow-soft: 0 2px 8px rgb(24 24 24 / 8%);
 
-  /* legacy aliases */
+  /* Legacy aliases consumed throughout the existing pages. */
   --color-background: var(--bg);
-  --color-midground:  var(--card);
+  --color-midground: var(--card);
   --color-foreground: var(--fg);
-  --color-primary:    var(--primary);
-  --color-border:     var(--border);
-  --color-muted:      var(--fg-muted);
+  --color-primary: var(--primary);
+  --color-border: var(--border);
+  --color-muted: var(--fg-muted);
 
-  /* ── Button theme ─────────────────────────────────────────────── */
-  --btn-bg:          #ffffff;
-  --btn-fg:          #000000;
-  --btn-bg-disabled: rgba(255,255,255,0.12);
-  --btn-fg-disabled: rgba(255,255,255,0.3);
+  --btn-bg: #707070;
+  --btn-fg: #fff;
+  --btn-bg-disabled: #dcdcde;
+  --btn-fg-disabled: #79797d;
 }
 
-/* Light theme — manual toggle */
-[data-theme="light"] {
-  --bg:              #f4f4f5;
-  --sidebar-bg:      #ffffff;
-  --sidebar-hover:   rgba(0,0,0,0.04);
-  --sidebar-active:  rgba(0,0,0,0.07);
-  --card:            #ffffff;
-  --input-bg:        #f1f1f1;
-  --fg:              #18181b;
-  --fg-muted:        #52525b;
-  --fg-subtle:       #a1a1aa;
-  --border:          rgba(0,0,0,0.10);
-  --border-focus:    rgba(0,0,0,0.35);
-  --primary:         #18181b;           /* same as --fg in light */
-  --primary-dim:     rgba(0,0,0,0.07);  /* subtle grey highlight */
-  --color-background: var(--bg);
-  --color-midground:  var(--card);
-  --color-foreground: var(--fg);
-  --color-primary:    var(--primary);
-  --color-border:     var(--border);
-  --color-muted:      var(--fg-muted);
-  --btn-bg:          #18181b;
-  --btn-fg:          #ffffff;
-  --btn-bg-disabled: rgba(0,0,0,0.12);
-  --btn-fg-disabled: rgba(0,0,0,0.3);
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #181818;
+  --header-bg: #181818;
+  --sidebar-bg: #181818;
+  --sidebar-fg: #f5f5f5;
+  --sidebar-muted: #c3c4c6;
+  --sidebar-border: rgb(255 255 255 / 10%);
+  --sidebar-hover: #303032;
+  --sidebar-active: #303032;
+  --nav-hover: #303032;
+  --nav-active: #303032;
+  --card: #303032;
+  --input-bg: #181818;
+
+  --fg: #c3c4c6;
+  --fg-muted: #919295;
+  --fg-subtle: #79797d;
+  --fg-disabled: #606164;
+  --primary: #aaabae;
+  --primary-dim: #303032;
+  --blue: #84c9f0;
+  --green: #48bb78;
+  --red: #ff8b60;
+  --warning: #f9a165;
+  --purple: #b69af5;
+  --color-success: var(--green);
+  --color-info: var(--blue);
+  --color-warning: var(--warning);
+  --color-danger: var(--red);
+  --success-bg: color-mix(in srgb, var(--green) 16%, var(--bg));
+  --info-bg: color-mix(in srgb, var(--blue) 16%, var(--bg));
+  --warning-bg: color-mix(in srgb, var(--warning) 16%, var(--bg));
+  --error-bg: color-mix(in srgb, var(--red) 16%, var(--bg));
+  --danger-action-bg: #cd372c;
+  --danger-action-fg: #fff;
+  --overlay: rgb(0 0 0 / 80%);
+  --shadow-popover: 0 12px 32px rgb(0 0 0 / 42%);
+
+  --border: rgb(255 255 255 / 10%);
+  --border-subtle: #303032;
+  --border-focus: #919295;
+  --selection: #48484a;
+  --tooltip-bg: #303032;
+  --tooltip-fg: #f5f5f5;
+  --shadow-soft: 4px 4px 0 rgb(255 255 255 / 4%);
+
+  --btn-bg: #aaabae;
+  --btn-fg: #181818;
+  --btn-bg-disabled: #48484a;
+  --btn-fg-disabled: #919295;
 }
 
-/* System light fallback */
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    --bg:              #f4f4f5;
-    --sidebar-bg:      #ffffff;
-    --sidebar-hover:   rgba(0,0,0,0.04);
-    --sidebar-active:  rgba(0,0,0,0.07);
-    --card:            #ffffff;
-    --input-bg:        #f1f1f1;
-    --fg:              #18181b;
-    --fg-muted:        #52525b;
-    --fg-subtle:       #a1a1aa;
-    --border:          rgba(0,0,0,0.10);
-    --border-focus:    rgba(0,0,0,0.35);
-    --primary:         #18181b;
-    --primary-dim:     rgba(0,0,0,0.07);
-    --color-background: var(--bg);
-    --color-midground:  var(--card);
-    --color-foreground: var(--fg);
-    --color-primary:    var(--primary);
-    --color-border:     var(--border);
-    --color-muted:      var(--fg-muted);
-    --btn-bg:          #18181b;
-    --btn-fg:          #ffffff;
-    --btn-bg-disabled: rgba(0,0,0,0.12);
-    --btn-fg-disabled: rgba(0,0,0,0.3);
-  }
-}
-
-/* ── Reset ────────────────────────────────────────────────────────── */
+/* Reset and base typography */
 *, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root { min-height: 100%; }
 
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* ── Scrollbar ────────────────────────────────────────────────────── */
-::-webkit-scrollbar            { width: 6px; height: 6px; }
-::-webkit-scrollbar-track      { background: transparent; }
-::-webkit-scrollbar-thumb      { background: rgba(255,255,255,0.1); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,0.2); }
+button, input, select, textarea { font: inherit; }
+code, kbd, samp, pre { font-family: var(--font-mono); }
 
-/* ── Focus ring ───────────────────────────────────────────────────── */
+::selection { background: var(--selection); color: var(--fg); }
+
+/* Scrollbars and keyboard focus follow the active palette. */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg-muted) 35%, transparent); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg-muted) 55%, transparent); }
+
 :focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
 
-/* ── Spin animation (used by scheduler run button) ─────────────────────── */
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-.text-muted   { color: var(--fg-muted); }
+.text-muted { color: var(--fg-muted); }
 .text-primary { color: var(--fg); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

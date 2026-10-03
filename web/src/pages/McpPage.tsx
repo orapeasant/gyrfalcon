@@ -152,8 +152,8 @@ const cx = {
   list:          { flex:1, overflowY:"auto" as const },
   item:          (active:boolean):React.CSSProperties => ({ padding:"0.6rem 1rem", cursor:"pointer", borderLeft: active ? "3px solid var(--fg-muted)" : "3px solid transparent", background: active ? "var(--sidebar-active)" : "transparent", borderBottom:"1px solid var(--color-border)" }),
   itemName:      (active:boolean):React.CSSProperties => ({ fontWeight: active ? 700 : 400, color: "var(--color-foreground)", fontSize:"0.9rem", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }),
-  dot:           (on:boolean):React.CSSProperties => ({ display:"inline-block", width:"7px", height:"7px", borderRadius:"50%", background: on ? "#34d399" : "#6b7280", marginRight:"0.4rem" }),
-  main:          { flex:1, overflow:"auto", padding:"1.5rem" } as React.CSSProperties,
+  dot:           (on:boolean):React.CSSProperties => ({ display:"inline-block", width:"7px", height:"7px", borderRadius:"50%", background: on ? "var(--green)" : "var(--fg-muted)", marginRight:"0.4rem" }),
+  main:          { flex:1, overflow:"auto", padding:0 } as React.CSSProperties,
   empty:         { display:"flex", flexDirection:"column" as const, alignItems:"center", justifyContent:"center", height:"60vh", color:"var(--color-muted)", gap:"0.5rem" },
   card:          { background:"var(--color-midground)", border:"1px solid var(--color-border)", borderRadius:"8px", padding:"1.5rem", maxWidth:"820px" } as React.CSSProperties,
   cardH:         { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"1.25rem", flexWrap:"wrap" as const, gap:"0.75rem" },
@@ -171,11 +171,11 @@ const cx = {
   discoverBtn:   (loading:boolean):React.CSSProperties => ({ padding:"0.42rem 1rem", background: loading ? "var(--btn-bg-disabled)" : "var(--btn-bg)", color: loading ? "var(--btn-fg-disabled)" : "var(--btn-fg)", border:"none", borderRadius:"6px", fontWeight:700, fontSize:"0.82rem", cursor: loading ? "not-allowed" : "pointer" }),
   envInput:      { width:"100%", background:"var(--color-background)", border:"1px solid transparent", borderRadius:"4px", padding:"0.28rem 0.45rem", color:"var(--color-foreground)", fontSize:"0.8rem", fontFamily:"monospace" } as React.CSSProperties,
   addEnvBtn:     { background:"transparent", color:"var(--fg-muted)", border:"1px solid var(--border)", borderRadius:"5px", padding:"0.18rem 0.55rem", fontSize:"0.75rem", cursor:"pointer" },
-  rmBtn:         { background:"transparent", color:"#f87171", border:"none", cursor:"pointer", fontSize:"0.82rem", padding:"0 0.3rem" },
+  rmBtn:         { background:"transparent", color:"var(--red)", border:"none", cursor:"pointer", fontSize:"0.82rem", padding:"0 0.3rem" },
   actions:       { display:"flex", gap:"0.75rem", marginTop:"1.5rem", flexWrap:"wrap" as const, alignItems:"center" },
   saveBtn:       (dis:boolean):React.CSSProperties => ({ background: dis ? "var(--btn-bg-disabled)" : "var(--btn-bg)", color: dis ? "var(--btn-fg-disabled)" : "var(--btn-fg)", border:"none", borderRadius:"6px", padding:"0.5rem 1.25rem", fontWeight:700, fontSize:"0.875rem", cursor: dis ? "not-allowed" : "pointer" }),
-  delBtn:        { background:"transparent", color:"#f87171", border:"1px solid #f87171", borderRadius:"6px", padding:"0.5rem 1rem", fontSize:"0.875rem", cursor:"pointer", marginLeft:"auto" },
-  toast:         (t:"success"|"error"):React.CSSProperties => ({ position:"fixed", bottom:"1.5rem", right:"1.5rem", background: t==="success" ? "#064e3b" : "#450a0a", border:`1px solid ${t==="success" ? "#34d399" : "#f87171"}`, borderRadius:"8px", padding:"0.75rem 1.25rem", color: t==="success" ? "#34d399" : "#f87171", fontWeight:600, fontSize:"0.875rem", zIndex:9999, boxShadow:"0 4px 24px rgba(0,0,0,0.5)" }),
+  delBtn:        { background:"transparent", color:"var(--red)", border:"1px solid var(--red)", borderRadius:"8px", padding:"0.5rem 1rem", fontSize:"0.875rem", cursor:"pointer", marginLeft:"auto" },
+  toast:         (t:"success"|"error"):React.CSSProperties => ({ position:"fixed", bottom:"1.5rem", right:"1.5rem", background: t==="success" ? "var(--success-bg)" : "var(--error-bg)", border:`1px solid ${t==="success" ? "var(--green)" : "var(--red)"}`, borderRadius:"8px", padding:"0.75rem 1.25rem", color: t==="success" ? "var(--green)" : "var(--red)", fontWeight:600, fontSize:"0.875rem", zIndex:9999, boxShadow:"var(--shadow-popover)" }),
   // Entity table
   etWrap:        { border:"1px solid var(--color-border)", borderRadius:"6px", overflow:"hidden" } as React.CSSProperties,
   etHdr:         { display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0.5rem 0.75rem", background:"var(--color-background)", borderBottom:"1px solid var(--color-border)" },
@@ -184,11 +184,11 @@ const cx = {
   etSelBtn:      { background:"transparent", border:"1px solid var(--color-border)", borderRadius:"4px", padding:"0.15rem 0.5rem", fontSize:"0.72rem", color:"var(--color-muted)", cursor:"pointer" },
   etTable:       { width:"100%", borderCollapse:"collapse" as const },
   etTh:          { padding:"0.45rem 0.6rem", fontSize:"0.7rem", fontWeight:700, textTransform:"uppercase" as const, letterSpacing:"0.06em", color:"var(--color-muted)", textAlign:"left" as const, borderBottom:"1px solid var(--color-border)", background:"var(--color-background)" },
-  etTd:          { padding:"0.35rem 0.5rem", borderBottom:"1px solid rgba(42,42,58,0.6)", verticalAlign:"middle" as const },
+  etTd:          { padding:"0.35rem 0.5rem", borderBottom:"1px solid var(--border)", verticalAlign:"middle" as const },
   etName:        { fontFamily:"monospace", fontSize:"0.82rem", color:"var(--color-foreground)" },
   etInput:       { width:"100%", background:"transparent", border:"1px solid transparent", borderRadius:"4px", padding:"0.2rem 0.4rem", color:"var(--color-foreground)", fontSize:"0.8rem", fontFamily:"monospace" } as React.CSSProperties,
   etScInput:     { width:"90px", background:"transparent", border:"1px solid transparent", borderRadius:"4px", padding:"0.2rem 0.4rem", color:"var(--color-foreground)", fontSize:"0.8rem", fontFamily:"monospace" } as React.CSSProperties,
-  badge:         (ok:boolean):React.CSSProperties => ({ fontSize:"0.68rem", padding:"0.1rem 0.45rem", borderRadius:"10px", fontWeight:600, background: ok ? "rgba(52,211,153,0.15)" : "rgba(107,114,128,0.2)", color: ok ? "#34d399" : "var(--color-muted)" }),
+  badge:         (ok:boolean):React.CSSProperties => ({ fontSize:"0.68rem", padding:"0.1rem 0.45rem", borderRadius:"10px", fontWeight:600, background: ok ? "var(--success-bg)" : "var(--sidebar-active)", color: ok ? "var(--green)" : "var(--color-muted)" }),
 };
 
 // ── EnvEditor ─────────────────────────────────────────────────────────────────
@@ -347,8 +347,8 @@ function OperationTable({
   }
 
   const methodColor: Record<string, string> = {
-    GET: "#22c55e", POST: "#FF6012", PUT: "#456DE6",
-    PATCH: "#f5a623", DELETE: "#ef4444", OPTIONS: "#71717a", HEAD: "#71717a",
+    GET: "var(--green)", POST: "var(--warning)", PUT: "var(--blue)",
+    PATCH: "var(--warning)", DELETE: "var(--red)", OPTIONS: "var(--fg-muted)", HEAD: "var(--fg-muted)",
   };
 
   // Group by tag
@@ -397,7 +397,7 @@ function OperationTable({
                           onChange={ev => toggle(op.operation_id, ev.target.checked)} />
                       </td>
                       <td style={cx.etTd}>
-                        <span style={{ fontFamily:"monospace", fontSize:"11px", fontWeight:700, padding:"2px 6px", borderRadius:"4px", background:`${(methodColor[op.method]||"#71717a")}22`, color: methodColor[op.method]||"#71717a" }}>
+                        <span style={{ fontFamily:"monospace", fontSize:"11px", fontWeight:700, padding:"2px 6px", borderRadius:"6px", background:`color-mix(in srgb, ${methodColor[op.method] || "var(--fg-muted)"} 14%, var(--card))`, color: methodColor[op.method] || "var(--fg-muted)" }}>
                           {op.method}
                         </span>
                       </td>
@@ -485,9 +485,9 @@ function ODataForm({ form, setForm, discovering, discoverError, discoveredEntiti
     previewCard: { background:"var(--input-bg)", border:"1px solid var(--border)", borderRadius:"8px", padding:"16px", position:"sticky" as const, top:"16px" },
     previewTitle: { fontSize:"12px", fontWeight:700, color:"var(--fg)", marginBottom:"6px" },
     previewSub: { fontSize:"11px", color:"var(--fg-muted)", marginBottom:"10px" },
-    pre: { fontSize:"11px", lineHeight:1.6, fontFamily:"monospace", color:"#a9b1d6", overflowX:"auto" as const, whiteSpace:"pre" as const, maxHeight:"600px", overflowY:"auto" as const },
+    pre: { fontSize:"11px", lineHeight:1.6, fontFamily:"monospace", color:"var(--fg)", overflowX:"auto" as const, whiteSpace:"pre" as const, maxHeight:"600px", overflowY:"auto" as const },
     tagGroup: { display:"flex", flexWrap:"wrap" as const, gap:"6px", marginTop:"6px" },
-    tag: { display:"inline-flex", alignItems:"center", gap:"4px", background:"rgba(255,255,255,0.06)", border:"1px solid var(--border)", borderRadius:"4px", padding:"2px 8px", fontSize:"12px", fontFamily:"monospace", color:"var(--fg)" },
+    tag: { display:"inline-flex", alignItems:"center", gap:"4px", background:"var(--sidebar-active)", border:"1px solid var(--border)", borderRadius:"8px", padding:"2px 8px", fontSize:"12px", fontFamily:"monospace", color:"var(--fg)" },
     removeTag: { background:"transparent", border:"none", color:"var(--fg-muted)", cursor:"pointer", fontSize:"12px", padding:"0", lineHeight:1 },
     addSetBtn: { background:"transparent", border:"1px dashed var(--border)", borderRadius:"5px", padding:"4px 12px", fontSize:"12px", color:"var(--fg-muted)", cursor:"pointer", marginTop:"4px" },
     overrideRow: { display:"grid", gridTemplateColumns:"1fr 1fr 28px", gap:"6px", alignItems:"center", marginBottom:"6px" } as React.CSSProperties,
@@ -514,7 +514,7 @@ function ODataForm({ form, setForm, discovering, discoverError, discoveredEntiti
             <div style={iS.hint}>Optional human-readable description.</div>
           </div>
 
-          <div style={iS.sectionH}>Service URL <span style={{ color:"#ef4444" }}>*</span></div>
+          <div style={iS.sectionH}>Service URL <span style={{ color:"var(--red)" }}>*</span></div>
           <input style={iS.input} value={form.url}
             placeholder="https://cpidev.apimanagement.us21.hana.ondemand.com/v2/Purchase_Order"
             onChange={e => f("url", e.target.value)} />
@@ -552,9 +552,9 @@ function ODataForm({ form, setForm, discovering, discoverError, discoveredEntiti
           <button style={iS.discoverBtn(discovering||!form.url)} disabled={discovering||!form.url} onClick={onDiscover}>
             {discovering ? "⠋ Discovering…" : "🔍 Discover Entities"}
           </button>
-          {discoverError && <span style={{ color:"#f87171", fontSize:"12px" }}>✗ {discoverError}</span>}
+          {discoverError && <span style={{ color:"var(--red)", fontSize:"12px" }}>✗ {discoverError}</span>}
           {discoveredEntities.length>0 && !discoverError && (
-            <span style={{ color:"#34d399", fontSize:"12px" }}>✓ {discoveredEntities.length} entities found</span>
+            <span style={{ color:"var(--green)", fontSize:"12px" }}>✓ {discoveredEntities.length} entities found</span>
           )}
         </div>
 
@@ -620,7 +620,7 @@ function ODataForm({ form, setForm, discovering, discoverError, discoveredEntiti
                 }} />
               <input style={iS.input} value={v} placeholder="short_name"
                 onChange={e => { const u={...form.name_overrides}; u[k]=e.target.value; f("name_overrides",u); }} />
-              <button style={{ background:"transparent", border:"none", color:"#f87171", cursor:"pointer", fontSize:"14px" }}
+              <button style={{ background:"transparent", border:"none", color:"var(--red)", cursor:"pointer", fontSize:"14px" }}
                 onClick={()=>{ const u={...form.name_overrides}; delete u[k]; f("name_overrides",u); }}>✕</button>
             </div>
           ))}
@@ -647,7 +647,7 @@ function ODataForm({ form, setForm, discovering, discoverError, discoveredEntiti
 
         {/* Auth */}
         <div style={iS.card}>
-          <h3 style={iS.sectionTitle}>Auth <span style={{ color:"#ef4444" }}>*</span></h3>
+          <h3 style={iS.sectionTitle}>Auth <span style={{ color:"var(--red)" }}>*</span></h3>
           <div style={{ marginBottom:"12px" }}>
             <label style={iS.label}>Auth Type</label>
             <select style={{ ...iS.input, cursor:"pointer" }} value={form.auth?.type||"basic"}
@@ -660,13 +660,13 @@ function ODataForm({ form, setForm, discovering, discoverError, discoveredEntiti
           {(form.auth?.type||"basic") === "basic" && (<>
             <h4 style={{ fontSize:"14px", fontWeight:600, color:"var(--fg)", margin:"0 0 10px" }}>Basic</h4>
             <div style={{ marginBottom:"12px" }}>
-              <label style={iS.label}>Username <span style={{ color:"#ef4444" }}>*</span></label>
+              <label style={iS.label}>Username <span style={{ color:"var(--red)" }}>*</span></label>
               <input style={iS.input} value={form.auth?.username||""} placeholder="RFCAPIMTS410"
                 onChange={e => setForm(p=>({...p,auth:{...p.auth,username:e.target.value}}))} />
               <div style={iS.hint}>Username for HTTP Basic authentication.</div>
             </div>
             <div>
-              <label style={iS.label}>Password <span style={{ color:"#ef4444" }}>*</span></label>
+              <label style={iS.label}>Password <span style={{ color:"var(--red)" }}>*</span></label>
               <input style={iS.input} type="password" value={form.auth?.password||""} placeholder="••••••••"
                 onChange={e => setForm(p=>({...p,auth:{...p.auth,password:e.target.value}}))} />
             </div>
@@ -1035,9 +1035,9 @@ function McpEditor({
             onClick={handleDiscoverOpenAPI}>
             {discovering ? "⠋ Discovering…" : "🔍 Discover Operations"}
           </button>
-          {discoverError && <span style={{ color:"#f87171", fontSize:"0.82rem" }}>✗ {discoverError}</span>}
+          {discoverError && <span style={{ color:"var(--red)", fontSize:"0.82rem" }}>✗ {discoverError}</span>}
           {discoveredOperations.length > 0 && !discoverError && (
-            <span style={{ color:"#34d399", fontSize:"0.82rem" }}>
+            <span style={{ color:"var(--green)", fontSize:"0.82rem" }}>
               ✓ {discoveredOperations.length} operations{specTitle ? ` — ${specTitle}` : ""}
             </span>
           )}
@@ -1127,7 +1127,7 @@ export function McpPage() {
 
   const typeIcon = (t: string) => t === "odata" ? "🏭" : t === "openapi" ? "📄" : "⌨";
 
-  if (loading) return <div style={{ padding:"2rem", color:"var(--color-muted)" }}>⠋ Loading MCP servers…</div>;
+  if (loading) return <div style={{ color:"var(--color-muted)" }}>⠋ Loading MCP servers…</div>;
 
   return (
     <div style={cx.layout}>

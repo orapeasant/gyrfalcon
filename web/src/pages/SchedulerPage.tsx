@@ -67,12 +67,12 @@ function emptyJob(): Partial<SchedulerJob> & { _isNew: boolean } {
 function StatusBadge({ state, lastStatus }: { state?: string; lastStatus?: string }) {
   const s = state || "scheduled";
   const cfg: Record<string, { color: string; bg: string; Icon: any; label: string }> = {
-    scheduled:  { color: "#60a5fa", bg: "rgba(96,165,250,0.12)",  Icon: Timer,        label: "Scheduled" },
+    scheduled:  { color: "var(--blue)", bg: "var(--info-bg)",  Icon: Timer,        label: "Scheduled" },
     running:    { color: "var(--fg-muted)", bg: "var(--primary-dim)", Icon: RefreshCw, label: "Running" },
-    completed:  { color: "#22c55e", bg: "rgba(34,197,94,0.12)",   Icon: CheckCircle,  label: "Completed" },
-    failed:     { color: "#ef4444", bg: "rgba(239,68,68,0.12)",   Icon: XCircle,      label: "Failed" },
-    paused:     { color: "#71717a", bg: "rgba(113,113,122,0.12)", Icon: Pause,        label: "Paused" },
-    error:      { color: "#ef4444", bg: "rgba(239,68,68,0.12)",   Icon: AlertCircle,  label: "Error" },
+    completed:  { color: "var(--green)", bg: "var(--success-bg)",   Icon: CheckCircle,  label: "Completed" },
+    failed:     { color: "var(--red)", bg: "var(--error-bg)",   Icon: XCircle,      label: "Failed" },
+    paused:     { color: "var(--fg-muted)", bg: "var(--sidebar-active)", Icon: Pause,        label: "Paused" },
+    error:      { color: "var(--red)", bg: "var(--error-bg)",   Icon: AlertCircle,  label: "Error" },
   };
   const c = cfg[s] || cfg.scheduled;
   return (
@@ -87,7 +87,7 @@ function StatusBadge({ state, lastStatus }: { state?: string; lastStatus?: strin
 
 const C = {
   layout:   { display:"flex", height:"100%", overflow:"hidden" },
-  sidebar:  { width:"260px", flexShrink:0, borderRight:"1px solid var(--border)", display:"flex", flexDirection:"column" as const, background:"var(--sidebar-bg)", overflow:"hidden" },
+  sidebar:  { width:"260px", flexShrink:0, borderRight:"1px solid var(--border)", display:"flex", flexDirection:"column" as const, background:"var(--card)", overflow:"hidden" },
   sbHead:   { padding:"12px 16px", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"space-between" },
   sbTitle:  { fontSize:"12px", fontWeight:700, textTransform:"uppercase" as const, letterSpacing:"0.08em", color:"var(--fg-muted)", margin:0 },
   newBtn:   { background:"var(--btn-bg)", color:"var(--btn-fg)", border:"none", borderRadius:"5px", padding:"4px 10px", fontSize:"12px", fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:"4px" },
@@ -96,9 +96,9 @@ const C = {
   jobName:  (active:boolean):React.CSSProperties => ({ fontSize:"13px", fontWeight: active ? 600 : 400, color: active ? "var(--fg)" : "var(--fg-muted)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }),
   jobMeta:  { fontSize:"11px", color:"var(--fg-muted)", marginTop:"2px", display:"flex", alignItems:"center", gap:"6px" },
   main:     { flex:1, display:"flex", flexDirection:"column" as const, overflow:"hidden" },
-  tabBar:   { display:"flex", alignItems:"center", gap:"4px", padding:"0 20px", borderBottom:"1px solid var(--border)", height:"44px", flexShrink:0, background:"var(--sidebar-bg)" },
-  tab:      (active:boolean):React.CSSProperties => ({ padding:"6px 14px", borderRadius:"5px", fontSize:"13px", fontWeight: active ? 600 : 400, color: active ? "var(--fg)" : "var(--fg-muted)", background: active ? "rgba(255,255,255,0.06)" : "transparent", border:"none", cursor:"pointer", transition:"all 0.1s" }),
-  content:  { flex:1, overflow:"auto", padding:"20px" },
+  tabBar:   { display:"flex", alignItems:"center", gap:"4px", padding:"0 20px", borderBottom:"1px solid var(--border)", height:"44px", flexShrink:0, background:"var(--card)" },
+  tab:      (active:boolean):React.CSSProperties => ({ padding:"6px 14px", borderRadius:"8px", fontSize:"13px", fontWeight: active ? 600 : 400, color: active ? "var(--fg)" : "var(--fg-muted)", background: active ? "var(--sidebar-active)" : "transparent", border:"none", cursor:"pointer", transition:"all 0.1s" }),
+  content:  { flex:1, overflow:"auto", padding:0 },
   card:     { background:"var(--card)", border:"1px solid var(--border)", borderRadius:"8px", padding:"20px", maxWidth:"680px" },
   cardHead: { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"20px", flexWrap:"wrap" as const, gap:"10px" },
   h2:       { fontSize:"15px", fontWeight:700, margin:0, display:"flex", alignItems:"center", gap:"8px" },
@@ -111,9 +111,9 @@ const C = {
   actions:  { display:"flex", gap:"8px", marginTop:"18px", flexWrap:"wrap" as const, alignItems:"center" },
   saveBtn:  (dis:boolean):React.CSSProperties => ({ background: dis ? "var(--btn-bg-disabled)" : "var(--btn-bg)", color: dis ? "var(--btn-fg-disabled)" : "var(--btn-fg)", border:"none", borderRadius:"6px", padding:"7px 16px", fontWeight:700, fontSize:"13px", cursor: dis ? "not-allowed" : "pointer", display:"flex", alignItems:"center", gap:"6px" }),
   secBtn:   { background:"transparent", color:"var(--fg-muted)", border:"1px solid var(--border)", borderRadius:"6px", padding:"7px 14px", fontSize:"13px", cursor:"pointer", display:"flex", alignItems:"center", gap:"6px" } as React.CSSProperties,
-  delBtn:   { background:"transparent", color:"#ef4444", border:"1px solid #ef4444", borderRadius:"6px", padding:"7px 14px", fontSize:"13px", cursor:"pointer", display:"flex", alignItems:"center", gap:"6px", marginLeft:"auto" } as React.CSSProperties,
+  delBtn:   { background:"transparent", color:"var(--red)", border:"1px solid var(--red)", borderRadius:"8px", padding:"7px 14px", fontSize:"13px", cursor:"pointer", display:"flex", alignItems:"center", gap:"6px", marginLeft:"auto" } as React.CSSProperties,
   empty:    { display:"flex", flexDirection:"column" as const, alignItems:"center", justifyContent:"center", height:"60%", color:"var(--fg-muted)", gap:"8px" },
-  toast:    (t:"success"|"error"):React.CSSProperties => ({ position:"fixed", bottom:"20px", right:"20px", background: t==="success" ? "#064e3b" : "#450a0a", border:`1px solid ${t==="success" ? "#22c55e" : "#ef4444"}`, borderRadius:"8px", padding:"10px 16px", color: t==="success" ? "#22c55e" : "#ef4444", fontWeight:600, fontSize:"13px", zIndex:9999, boxShadow:"0 4px 20px rgba(0,0,0,0.5)" }),
+  toast:    (t:"success"|"error"):React.CSSProperties => ({ position:"fixed", bottom:"20px", right:"20px", background: t==="success" ? "var(--success-bg)" : "var(--error-bg)", border:`1px solid ${t==="success" ? "var(--green)" : "var(--red)"}`, borderRadius:"8px", padding:"10px 16px", color: t==="success" ? "var(--green)" : "var(--red)", fontWeight:600, fontSize:"13px", zIndex:9999, boxShadow:"var(--shadow-popover)" }),
   runRow:   (active:boolean):React.CSSProperties => ({ display:"flex", alignItems:"center", padding:"8px 12px", borderRadius:"6px", cursor:"pointer", background: active ? "var(--sidebar-active)" : "transparent", border: active ? "1px solid var(--border)" : "1px solid transparent", marginBottom:"4px", transition:"all 0.1s" }),
   logPre:   { background:"var(--input-bg)", border:"1px solid var(--border)", borderRadius:"6px", padding:"14px", fontSize:"12px", lineHeight:1.6, overflowX:"auto", whiteSpace:"pre-wrap", wordBreak:"break-word", marginTop:"14px", maxHeight:"500px", overflowY:"auto", color:"var(--fg-muted)" } as React.CSSProperties,
 };
@@ -282,11 +282,11 @@ function SchedulerEditor({
             </div>
 
             {!isNew && (
-              <div style={{ padding:"10px 14px", background:"rgba(255,255,255,0.03)", borderRadius:"6px", fontSize:"12px", color:"var(--fg-muted)", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px", marginBottom:"4px" }}>
+              <div style={{ padding:"10px 14px", background:"var(--sidebar-active)", borderRadius:"8px", fontSize:"12px", color:"var(--fg-muted)", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px", marginBottom:"4px" }}>
                 <span>Next run: <strong style={{ color:"var(--fg)" }}>{fmtTs((job as SchedulerJob).next_run_at)}</strong></span>
                 <span>Last run: <strong style={{ color:"var(--fg)" }}>{fmtTs((job as SchedulerJob).last_run_at)}</strong></span>
                 <span>Runs completed: <strong style={{ color:"var(--fg)" }}>{(job as SchedulerJob).repeat?.completed ?? 0}</strong></span>
-                <span>Last status: <strong style={{ color: (job as SchedulerJob).last_status === "success" ? "#22c55e" : "#ef4444" }}>{(job as SchedulerJob).last_status || "—"}</strong></span>
+                <span>Last status: <strong style={{ color: (job as SchedulerJob).last_status === "success" ? "var(--green)" : "var(--red)" }}>{(job as SchedulerJob).last_status || "—"}</strong></span>
               </div>
             )}
 
@@ -394,8 +394,8 @@ export function SchedulerPage() {
   }
 
   const stateColor: Record<string, string> = {
-    scheduled: "#60a5fa", running: "#f5a623", completed: "#22c55e",
-    failed: "#ef4444", error: "#ef4444", paused: "#71717a",
+    scheduled: "var(--blue)", running: "var(--warning)", completed: "var(--green)",
+    failed: "var(--red)", error: "var(--red)", paused: "var(--fg-muted)",
   };
 
   async function handleRunNow(e: React.MouseEvent, job: SchedulerJob) {
@@ -426,12 +426,12 @@ export function SchedulerPage() {
       {runToast && (
         <div style={{
           position:"fixed", bottom:"20px", right:"20px", zIndex:9999,
-          background: runToast.ok ? "#064e3b" : "#450a0a",
-          border: `1px solid ${runToast.ok ? "#22c55e" : "#ef4444"}`,
+          background: runToast.ok ? "var(--success-bg)" : "var(--error-bg)",
+          border: `1px solid ${runToast.ok ? "var(--green)" : "var(--red)"}`,
           borderRadius:"8px", padding:"10px 16px",
-          color: runToast.ok ? "#22c55e" : "#ef4444",
+          color: runToast.ok ? "var(--green)" : "var(--red)",
           fontWeight:600, fontSize:"13px",
-          boxShadow:"0 4px 20px rgba(0,0,0,0.5)",
+          boxShadow:"var(--shadow-popover)",
         }}>
           {runToast.ok ? "⚡ " : "✗ "}{runToast.msg}
         </div>
@@ -479,9 +479,9 @@ export function SchedulerPage() {
                   </button>
                 </div>
                 <div style={C.jobMeta}>
-                  <span style={{ width:"6px", height:"6px", borderRadius:"50%", background: stateColor[j.state] || "#71717a", display:"inline-block", flexShrink:0 }} />
+                  <span style={{ width:"6px", height:"6px", borderRadius:"50%", background: stateColor[j.state] || "var(--fg-muted)", display:"inline-block", flexShrink:0 }} />
                   <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{j.schedule_display || j.schedule_raw}</span>
-                  {!j.enabled && <span style={{ color:"#71717a" }}>off</span>}
+                  {!j.enabled && <span style={{ color:"var(--fg-muted)" }}>off</span>}
                 </div>
               </div>
             );

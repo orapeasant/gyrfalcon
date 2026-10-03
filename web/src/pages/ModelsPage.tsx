@@ -21,7 +21,7 @@ interface ModelState {
 
 const S = {
   page: {
-    padding: '1.5rem',
+    padding: 0,
     maxWidth: '960px',
     margin: '0 auto',
   } as React.CSSProperties,
@@ -136,8 +136,8 @@ const S = {
     fontSize: '0.7rem',
     padding: '0.1rem 0.4rem',
     borderRadius: '4px',
-    background: ok ? 'rgba(52,211,153,0.15)' : 'rgba(248,113,113,0.15)',
-    color: ok ? '#34d399' : '#f87171',
+    background: ok ? 'var(--success-bg)' : 'var(--error-bg)',
+    color: ok ? 'var(--green)' : 'var(--red)',
     fontWeight: 600,
   }),
 
@@ -180,7 +180,7 @@ const S = {
       ? '3px solid var(--fg-muted)'
       : '3px solid transparent',
     background: selected ? 'var(--sidebar-active)' : 'transparent',
-    borderBottom: '1px solid rgba(42,42,58,0.5)',
+    borderBottom: '1px solid var(--border)',
     transition: 'background 0.1s',
   }),
 
@@ -213,15 +213,15 @@ const S = {
     position: 'fixed' as const,
     bottom: '1.5rem',
     right: '1.5rem',
-    background: type === 'success' ? '#064e3b' : '#450a0a',
-    border: `1px solid ${type === 'success' ? '#34d399' : '#f87171'}`,
+    background: type === 'success' ? 'var(--success-bg)' : 'var(--error-bg)',
+    border: `1px solid ${type === 'success' ? 'var(--green)' : 'var(--red)'}`,
     borderRadius: '8px',
     padding: '0.75rem 1.25rem',
-    color: type === 'success' ? '#34d399' : '#f87171',
+    color: type === 'success' ? 'var(--green)' : 'var(--red)',
     fontWeight: 600,
     fontSize: '0.875rem',
     zIndex: 9999,
-    boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+    boxShadow: 'var(--shadow-popover)',
   }),
 
   stepLabel: {

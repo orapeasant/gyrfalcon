@@ -62,7 +62,7 @@
 .flow-attribute-top button, .flow-transient-list button, .flow-add-transient button { flex: none; display: grid; place-items: center; width: 24px; height: 25px; border: 0; border-radius: 4px; background: transparent; color: var(--fg-muted); cursor: pointer; }
 .flow-small-action, .flow-delete-action { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--input-bg); color: var(--fg); cursor: pointer; font: inherit; font-size: 11px; }
 .flow-small-action:disabled { opacity: .5; cursor: not-allowed; }
-.flow-delete-action { margin-top: 14px; color: #d25555; }
+.flow-delete-action { margin-top: 14px; color: var(--red); }
 .flow-canvas-shell { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg); }
 .flow-canvas-shell .react-flow { width: 100%; height: 100%; }
 .flow-canvas-shell .react-flow__controls button { background: var(--card); color: var(--fg); border-bottom-color: var(--border); }
@@ -77,32 +77,32 @@
 .flow-link-prompt { top: 38px; display: flex; align-items: center; gap: 6px; color: var(--fg); pointer-events: auto; }
 .flow-link-prompt button { border: 0; background: transparent; color: var(--fg); cursor: pointer; }
 .flow-node-wrap { position: relative; display: flex; flex-direction: column; align-items: center; width: 50px; height: 50px; min-width: 50px; }
-.flow-card { position: relative; display: grid; place-items: center; width: 50px; height: 50px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--fg); box-shadow: 0 3px 12px #0001; cursor: pointer; }
+.flow-card { position: relative; display: grid; place-items: center; width: 50px; height: 50px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--fg); box-shadow: var(--shadow-popover); cursor: pointer; }
 .flow-node-label { position: absolute; top: calc(100% + 4px); left: 50%; display: block; width: max-content; max-width: 160px; overflow: hidden; transform: translateX(-50%); color: var(--fg); font-size: 10px; line-height: 1.25; text-align: center; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .flow-node-resize-handle { width: 7px !important; height: 7px !important; border: 1px solid var(--card) !important; border-radius: 2px !important; background: var(--btn-bg) !important; }
 .flow-node-resize-line { border-color: color-mix(in srgb, var(--btn-bg) 60%, transparent) !important; }
 .flow-card.selected { border-color: var(--btn-bg); box-shadow: 0 0 0 2px color-mix(in srgb, var(--btn-bg) 25%, transparent); }
-.flow-card-start { border-color: #23a475; }
-.flow-card-end { border-color: #d66a64; }
+.flow-card-start { border-color: var(--green); }
+.flow-card-end { border-color: var(--red); }
 .flow-card-process { border-style: dashed; border-color: var(--btn-bg); }
-.flow-card-notification { border-color: #456de6; }
+.flow-card-notification { border-color: var(--blue); }
 .flow-card-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: 7px; background: color-mix(in srgb, var(--btn-bg) 12%, transparent); color: var(--btn-bg); }
 .flow-card-icon img { display: block; width: 24px; height: 24px; object-fit: contain; }
 .flow-card-icon img.flow-node-icon-notification { width: 24px; height: 24px; }
-.flow-card-start .flow-card-icon { color: #23a475; background: #23a47520; }
-.flow-card-end .flow-card-icon { color: #d66a64; background: #d66a6420; }
-.flow-card-notification .flow-card-icon { color: #456de6; background: #456de620; }
+.flow-card-start .flow-card-icon { color: var(--green); background: var(--success-bg); }
+.flow-card-end .flow-card-icon { color: var(--red); background: var(--error-bg); }
+.flow-card-notification .flow-card-icon { color: var(--blue); background: color-mix(in srgb, var(--blue) 12%, var(--card)); }
 .flow-card .react-flow__handle { width: 12px; height: 12px; z-index: 2; border: 2px solid var(--card); background: var(--btn-bg); opacity: .85; transition: opacity .12s; cursor: crosshair; }
-.flow-card .react-flow__handle.target { background: #23a475; }
+.flow-card .react-flow__handle.target { background: var(--green); }
 .flow-node-wrap:hover .react-flow__handle, .flow-node-wrap:focus-within .react-flow__handle { opacity: 1; }
-.flow-edge-label { padding: 4px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--fg); box-shadow: 0 2px 8px #0002; font: inherit; font-size: 10px; cursor: grab; touch-action: none; user-select: none; }
+.flow-edge-label { padding: 4px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--fg); box-shadow: var(--shadow-popover); font: inherit; font-size: 10px; cursor: grab; touch-action: none; user-select: none; }
 .flow-edge-label:active { cursor: grabbing; }
-.flow-node-context { position: fixed; z-index: 200; min-width: 155px; padding: 5px; border: 1px solid var(--border); border-radius: 7px; background: var(--card); box-shadow: 0 10px 30px #0004; }
+.flow-node-context { position: fixed; z-index: 200; min-width: 155px; padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); box-shadow: var(--shadow-popover); }
 .flow-node-context strong { display: block; padding: 5px 7px; color: var(--fg-muted); font-size: 10px; }
 .flow-node-context button { display: block; width: 100%; padding: 6px 7px; border: 0; border-radius: 4px; background: transparent; color: var(--fg); text-align: left; cursor: pointer; font: inherit; font-size: 11px; }
 .flow-node-context button:hover { background: var(--sidebar-active); }
 .flow-node-context button:disabled { opacity: .45; cursor: not-allowed; }
-.flow-node-context .flow-context-delete { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--border); border-radius: 0; color: #d25555; }
+.flow-node-context .flow-context-delete { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--border); border-radius: 0; color: var(--red); }
 .flow-context-empty { display: block; padding: 5px 7px; color: var(--fg-muted); font-size: 11px; }
 .flow-transient-list { margin-top: 15px; padding-top: 11px; border-top: 1px solid var(--border); }
 .flow-transient-list > strong { font-size: 11px; }
@@ -122,7 +122,7 @@
 @media (max-width: 800px) { .flow-designer-workspace { grid-template-columns: 130px minmax(250px, 1fr) 220px; } .flow-designer-workspace.palette-collapsed { grid-template-columns: 42px minmax(250px, 1fr) 220px; } .flow-designer-workspace.properties-collapsed { grid-template-columns: 130px minmax(250px, 1fr) 42px; } .flow-designer-workspace.palette-collapsed.properties-collapsed { grid-template-columns: 42px minmax(250px, 1fr) 42px; } .flow-properties { grid-column: 1 / -1; max-height: 250px; } }
 @media (max-width: 600px) { .flow-designer-workspace, .flow-designer-workspace.palette-collapsed { display: flex; flex-direction: column; height: auto; overflow: auto; } .flow-palette { flex: none; } .flow-properties { flex: none; max-height: 300px; } .flow-canvas-shell { flex: none; min-height: 430px; } .flow-canvas-shell .react-flow { min-height: 430px; } }
 .flow-process-view > .flow-designer-workspace { min-height: 0; }
-.flow-code-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px; background: #0009; }
+.flow-code-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px; background: var(--overlay); }
 .flow-code-dialog { box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; width: min(900px, 100%); height: min(760px, 94vh); padding: 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--fg); }
 .flow-code-dialog header, .flow-code-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .flow-code-dialog header strong { font-size: 15px; }
@@ -134,4 +134,4 @@
 .flow-code-dialog footer button { padding: 7px 11px; border: 1px solid var(--border); border-radius: 5px; background: var(--input-bg); color: var(--fg); cursor: pointer; }
 .flow-code-dialog footer button:last-child { background: var(--btn-bg); border-color: var(--btn-bg); color: var(--btn-fg); }
 .flow-code-dialog footer button:disabled { opacity: .5; cursor: not-allowed; }
-.flow-code-error { margin: 0; color: #d25555; font-size: 12px; }
+.flow-code-error { margin: 0; color: var(--red); font-size: 12px; }

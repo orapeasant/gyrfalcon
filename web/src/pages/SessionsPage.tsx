@@ -57,16 +57,16 @@ interface Trajectory {
 }
 
 const ROLE_COLOR: Record<string, string> = {
-  user: "#456DE6",
-  assistant: "#22c55e",
-  system: "#a855f7",
-  tool: "#f59e0b",
+  user: "var(--blue)",
+  assistant: "var(--green)",
+  system: "var(--purple)",
+  tool: "var(--warning)",
 };
 
 const PAGE_SIZES = [20, 50, 100];
 
 const S = {
-  page:    { padding:"20px", maxWidth:"1060px" } as React.CSSProperties,
+  page:    { padding:0, maxWidth:"1060px" } as React.CSSProperties,
   head:    { display:"flex", alignItems:"center", gap:"10px", marginBottom:"14px", flexWrap:"wrap" as const } as React.CSSProperties,
   h1:      { fontSize:"16px", fontWeight:700, margin:0 } as React.CSSProperties,
   cnt:     { fontSize:"12px", color:"var(--fg-muted)" } as React.CSSProperties,
@@ -106,7 +106,7 @@ const S = {
     display:"flex", alignItems:"center", justifyContent:"center",
     background:"transparent", border:"1px solid var(--border)", borderRadius:"5px",
     padding:"4px 7px", cursor:"pointer",
-    color: danger ? "#ef4444" : "var(--fg-muted)",
+    color: danger ? "var(--red)" : "var(--fg-muted)",
     transition:"background 0.1s, color 0.1s",
   }),
   pageBtn: (active?: boolean, disabled?: boolean): React.CSSProperties => ({
@@ -319,7 +319,7 @@ export function SessionsPage() {
   }
 
   if (loading && sessions.length === 0)
-    return <div style={{ padding:"24px", color:"var(--fg-muted)" }}>⠋ Loading sessions…</div>;
+    return <div style={{ color:"var(--fg-muted)" }}>⠋ Loading sessions…</div>;
 
   return (
     <div style={S.page}>
@@ -393,7 +393,7 @@ export function SessionsPage() {
                   <React.Fragment key={s.id}>
                     <tr
                       style={{ borderBottom: isOpen ? "none" : "1px solid var(--border)" }}
-                      onMouseEnter={e => (e.currentTarget.style.background="rgba(255,255,255,0.02)")}
+                      onMouseEnter={e => (e.currentTarget.style.background="color-mix(in srgb, var(--fg) 5%, var(--card))")}
                       onMouseLeave={e => (e.currentTarget.style.background="transparent")}
                     >
                       {/* ID */}
@@ -461,7 +461,7 @@ export function SessionsPage() {
                         <td colSpan={7} style={{ padding:0 }}>
                           <div style={S.detail}>
                             {st === "loading" && <span style={{ color:"var(--fg-muted)", fontSize:"13px" }}>⠋ Loading stats…</span>}
-                            {st === "error"   && <span style={{ color:"#ef4444", fontSize:"13px" }}>Failed to load stats.</span>}
+                            {st === "error"   && <span style={{ color:"var(--red)", fontSize:"13px" }}>Failed to load stats.</span>}
                             {st && st !== "loading" && st !== "error" && (() => {
                               const d = st as SessionStats;
                               return (
@@ -528,7 +528,7 @@ export function SessionsPage() {
                                   {trajOpen.has(s.id) && (() => {
                                     const t = traj[s.id];
                                     if (t === "loading") return <span style={S.trajMeta}>⠋ Loading trajectory…</span>;
-                                    if (t === "error")   return <span style={{ color:"#ef4444", fontSize:"12px" }}>Failed to load trajectory.</span>;
+                                    if (t === "error")   return <span style={{ color:"var(--red)", fontSize:"12px" }}>Failed to load trajectory.</span>;
                                     if (!t) return null;
                                     if (!t.steps.length) return <span style={S.trajMeta}>No steps recorded for this session.</span>;
 
@@ -568,7 +568,7 @@ export function SessionsPage() {
                                                           <span style={S.trajMeta}>{c.duration.toFixed(2)}s</span>
                                                         )}
                                                         {c.result == null && (
-                                                          <span style={{ ...S.trajMeta, color:"#f59e0b" }}>no result</span>
+                                                          <span style={{ ...S.trajMeta, color:"var(--warning)" }}>no result</span>
                                                         )}
                                                       </div>
                                                       {open && (

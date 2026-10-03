@@ -123,7 +123,7 @@ const PATH_LABELS: Record<string, string> = {
   users: "Users & Groups", roles: "Roles",
 };
 
-const SIDEBAR_W  = 240;
+const SIDEBAR_W  = 248;
 const SIDEBAR_CW = 56;  // collapsed width
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -135,32 +135,32 @@ const S = {
     width: collapsed ? SIDEBAR_CW : SIDEBAR_W,
     flexShrink: 0,
     background: "var(--sidebar-bg)",
-    borderRight: "1px solid var(--border)",
+    borderRight: "1px solid var(--sidebar-border)",
     display: "flex", flexDirection: "column",
     overflow: "hidden",
     transition: "width 0.2s ease",
   }),
 
   logo: (collapsed: boolean): React.CSSProperties => ({
-    height: "52px", padding: collapsed ? "0 14px" : "0 16px",
+    height: "56px", padding: collapsed ? "0 14px" : "0 16px",
     display: "flex", alignItems: "center",
     justifyContent: collapsed ? "center" : "space-between",
     gap: "10px",
-    borderBottom: "1px solid var(--border)", flexShrink: 0,
+    borderBottom: "1px solid var(--sidebar-border)", flexShrink: 0,
   }),
   logoLeft: { display:"flex", alignItems:"center", gap:"10px" } as React.CSSProperties,
   logoIcon: {
-    width: "28px", height: "28px", borderRadius: "7px",
-    background: "#456DE6",
+    width: "28px", height: "28px", borderRadius: "8px",
+    background: "var(--primary)",
     display: "flex", alignItems: "center", justifyContent: "center",
     flexShrink: 0,
   } as React.CSSProperties,
-  logoText: { fontWeight:700, fontSize:"14px", color:"var(--fg)", letterSpacing:"-0.01em", whiteSpace:"nowrap" as const },
-  logoSub:  { fontSize:"11px", color:"var(--fg-muted)", lineHeight:1.3 },
+  logoText: { fontWeight:700, fontSize:"14px", color:"var(--sidebar-fg)", letterSpacing:"-0.01em", whiteSpace:"nowrap" as const },
+  logoSub:  { fontSize:"11px", color:"var(--sidebar-muted)", lineHeight:1.3 },
 
   toggleBtn: {
     background: "transparent", border: "none", cursor: "pointer",
-    color: "var(--fg-muted)", padding: "4px", borderRadius: "4px",
+    color: "var(--sidebar-muted)", padding: "4px", borderRadius: "6px",
     display: "flex", alignItems: "center", justifyContent: "center",
     flexShrink: 0,
     transition: "color 0.1s, background 0.1s",
@@ -173,14 +173,14 @@ const S = {
     alignItems: "center", justifyContent: "space-between",
     padding: "6px 16px", marginTop: "4px",
     fontSize: "11px", fontWeight: 600,
-    letterSpacing: "0.02em", color: "var(--fg-muted)",
+    letterSpacing: "0.02em", color: "var(--sidebar-muted)",
     cursor: "pointer", userSelect: "none",
     transition: "color 0.1s",
   }),
 
   // collapsed group separator — tiny icon only
   groupSep: {
-    height: "1px", background: "var(--border)",
+    height: "1px", background: "var(--sidebar-border)",
     margin: "6px 12px",
   } as React.CSSProperties,
 
@@ -190,51 +190,51 @@ const S = {
     padding: collapsed ? "8px 0" : "7px 16px",
     margin: collapsed ? "1px 6px" : "1px 8px",
     justifyContent: collapsed ? "center" : "flex-start",
-    borderRadius: "6px",
-    fontSize: "13.5px", fontWeight: active ? 500 : 400,
-    color: active ? "var(--fg)" : "var(--fg-muted)",
-    background: active ? "var(--sidebar-active)" : "transparent",
+    borderRadius: "8px",
+    fontSize: "13px", fontWeight: active ? 600 : 400,
+    color: active ? "var(--sidebar-fg)" : "var(--sidebar-muted)",
+    background: active ? "var(--nav-active)" : "transparent",
     textDecoration: "none",
     cursor: "pointer",
     transition: "background 0.1s, color 0.1s",
-    borderLeft: (!collapsed && active) ? "2px solid var(--fg-muted)" : "2px solid transparent",
-    outline: (collapsed && active) ? "2px solid var(--fg-muted)" : "none",
+    borderLeft: (!collapsed && active) ? "2px solid var(--sidebar-fg)" : "2px solid transparent",
+    outline: (collapsed && active) ? "2px solid var(--sidebar-fg)" : "none",
     outlineOffset: collapsed ? "-2px" : "0",
     position: "relative" as const,
   }),
 
   userCard: (collapsed: boolean): React.CSSProperties => ({
     padding: collapsed ? "12px 0" : "12px 16px",
-    borderTop: "1px solid var(--border)",
+    borderTop: "1px solid var(--sidebar-border)",
     display: "flex", alignItems: "center",
     justifyContent: collapsed ? "center" : "flex-start",
     gap: "10px", flexShrink: 0,
   }),
   avatar: {
     width: "32px", height: "32px", borderRadius: "50%",
-    background: "#456DE6",
+    background: "var(--nav-hover)",
     display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: "12px", fontWeight: 700, color: "#fff", flexShrink: 0,
+    fontSize: "12px", fontWeight: 700, color: "var(--sidebar-fg)", flexShrink: 0,
   } as React.CSSProperties,
-  userName: { fontSize:"13px", fontWeight:600, color:"var(--fg)", lineHeight:1.3, whiteSpace:"nowrap" as const },
-  userOrg:  { fontSize:"11px", color:"var(--fg-muted)", lineHeight:1.3, whiteSpace:"nowrap" as const },
+  userName: { fontSize:"13px", fontWeight:600, color:"var(--sidebar-fg)", lineHeight:1.3, whiteSpace:"nowrap" as const },
+  userOrg:  { fontSize:"11px", color:"var(--sidebar-muted)", lineHeight:1.3, whiteSpace:"nowrap" as const },
 
   main:    { flex:1, display:"flex", flexDirection:"column" as const, overflow:"hidden" },
 
   topbar: {
-    height: "52px", flexShrink: 0,
+    height: "56px", flexShrink: 0,
     borderBottom: "1px solid var(--border)",
     display: "flex", alignItems: "center", padding: "0 24px",
-    background: "var(--sidebar-bg)", gap: "6px",
+    background: "var(--header-bg)", gap: "6px",
   } as React.CSSProperties,
   crumb:    { fontSize:"13px", color:"var(--fg-muted)" },
   crumbSep: { fontSize:"13px", color:"var(--fg-subtle)", margin:"0 2px" },
   crumbCur: { fontSize:"13px", fontWeight:500, color:"var(--fg)" },
 
-  content: { flex:1, overflow:"hidden", display:"flex", flexDirection:"column" as const } as React.CSSProperties,
+  content: { flex:1, minWidth:0, minHeight:0, boxSizing:"border-box", padding:12, overflow:"hidden", display:"flex", flexDirection:"column" as const } as React.CSSProperties,
 
   navBadge: {
-    fontSize: "10.5px", fontWeight: 700, color: "#fff", background: "#ef4444",
+    fontSize: "10.5px", fontWeight: 700, color: "var(--danger-action-fg)", background: "var(--danger-action-bg)",
     borderRadius: "9px", padding: "1px 6px", minWidth: "16px", textAlign: "center" as const,
     flexShrink: 0,
   } as React.CSSProperties,
@@ -248,15 +248,15 @@ const S = {
     position: "absolute" as const,
     left: "calc(100% + 10px)",
     top: "50%", transform: "translateY(-50%)",
-    background: "#1e1e23",
+    background: "var(--tooltip-bg)",
     border: "1px solid var(--border)",
-    color: "var(--fg)",
+    color: "var(--tooltip-fg)",
     fontSize: "12px", fontWeight: 500,
     padding: "4px 8px", borderRadius: "5px",
     whiteSpace: "nowrap" as const,
     pointerEvents: "none" as const,
     zIndex: 999,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+    boxShadow: "var(--shadow-soft)",
   },
 };
 
@@ -281,8 +281,8 @@ function NavItemLink({ item, collapsed, indent = 0 }: { item: NavItem; collapsed
         // back to it — the actual cause of items rendering unindented.
         paddingLeft: collapsed ? "0px" : `${16 + indent * 12}px`,
         background: hovered && !isActive
-          ? "var(--sidebar-hover)"
-          : isActive ? "var(--sidebar-active)" : "transparent",
+          ? "var(--nav-hover)"
+          : isActive ? "var(--nav-active)" : "transparent",
       })}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -326,7 +326,7 @@ function NavGroupSection({ group, collapsed, depth = 0 }: { group: NavGroup; col
         ? (depth === 0 && <div style={S.groupSep} />)
         : (
           <div
-            style={{ ...S.groupLabel(collapsed), color: anyActive ? "var(--fg)" : "var(--fg-muted)", paddingLeft: `${16 + depth * 12}px` }}
+            style={{ ...S.groupLabel(collapsed), color: anyActive ? "var(--sidebar-fg)" : "var(--sidebar-muted)", paddingLeft: `${16 + depth * 12}px` }}
             onClick={() => setOpen(o => !o)}
           >
             <span style={{ display:"flex", alignItems:"center", gap:"6px" }}>
@@ -399,8 +399,8 @@ function NavApplicationsSection({ collapsed }: { collapsed: boolean }) {
           style={{
             ...S.navItem(anyActive, true),
             background: hovered && !anyActive
-              ? "var(--sidebar-hover)"
-              : anyActive ? "var(--sidebar-active)" : "transparent",
+              ? "var(--nav-hover)"
+              : anyActive ? "var(--nav-active)" : "transparent",
           }}
         >
           <AppWindow size={15} strokeWidth={1.75} style={{ flexShrink: 0 }} />
@@ -420,7 +420,7 @@ function NavApplicationsSection({ collapsed }: { collapsed: boolean }) {
           margin: "4px 0 1px 0",
           fontSize: "11px", fontWeight: 600,
           letterSpacing: "0.08em",
-          color: anyActive ? "var(--fg)" : "var(--fg-muted)",
+          color: anyActive ? "var(--sidebar-fg)" : "var(--sidebar-muted)",
           cursor: "pointer", userSelect: "none",
         }}
         onClick={() => setOpen(o => !o)}
@@ -433,7 +433,7 @@ function NavApplicationsSection({ collapsed }: { collapsed: boolean }) {
           onClick={e => { e.stopPropagation(); navigate("/applications/manage"); }}
           style={{
             display: "flex", alignItems: "center",
-            color: isManageActive ? "var(--fg)" : "var(--fg-muted)",
+            color: isManageActive ? "var(--sidebar-fg)" : "var(--sidebar-muted)",
             padding: "2px 4px", borderRadius: "3px",
             transition: "color 0.1s",
           }}
@@ -478,7 +478,7 @@ function NavApplicationsSection({ collapsed }: { collapsed: boolean }) {
 /** Wraps non-chat pages so they scroll independently without affecting the outer shell. */
 function ScrollPage({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ flex: 1, overflow: "auto", height: "100%" }}>
+    <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
       {children}
     </div>
   );
@@ -573,7 +573,7 @@ function DashboardApp({ username, onLogout }: { username: string; onLogout: () =
           {!collapsed && (
             <div style={S.logoLeft}>
               <div style={S.logoIcon}>
-                <span style={{ color:"#fff", fontWeight:900, fontSize:"13px" }}>G</span>
+                <span style={{ color:"var(--btn-fg)", fontWeight:900, fontSize:"13px" }}>G</span>
               </div>
               <div>
                 <div style={S.logoText}>{APP_NAME}</div>
@@ -583,7 +583,7 @@ function DashboardApp({ username, onLogout }: { username: string; onLogout: () =
           )}
           {collapsed && (
             <div style={S.logoIcon}>
-              <span style={{ color:"#fff", fontWeight:900, fontSize:"13px" }}>G</span>
+              <span style={{ color:"var(--btn-fg)", fontWeight:900, fontSize:"13px" }}>G</span>
             </div>
           )}
           {!collapsed && (
@@ -614,7 +614,7 @@ function DashboardApp({ username, onLogout }: { username: string; onLogout: () =
 
         {/* Expand button (collapsed mode only) */}
         {collapsed && (
-          <div style={{ padding:"8px 0", display:"flex", justifyContent:"center", borderTop:"1px solid var(--border)" }}>
+          <div style={{ padding:"8px 0", display:"flex", justifyContent:"center", borderTop:"1px solid var(--sidebar-border)" }}>
             <button
               style={{ ...S.toggleBtn, padding:"6px" }}
               onClick={() => setCollapsed(false)}
@@ -639,18 +639,18 @@ function DashboardApp({ username, onLogout }: { username: string; onLogout: () =
               <button
                 onClick={onLogout}
                 title="Sign out"
-                style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "6px", padding: "5px 6px", cursor: "pointer", color: "var(--fg-muted)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                style={{ background: "transparent", border: "1px solid var(--sidebar-border)", borderRadius: "8px", padding: "5px 6px", cursor: "pointer", color: "var(--sidebar-muted)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
               ><LogOut size={14} /></button>
               <button
                 onClick={() => setIsDark(d => !d)}
                 title={isDark ? "Switch to light theme" : "Switch to dark theme"}
                 style={{
                   background: "transparent",
-                  border: "1px solid var(--border)",
-                  borderRadius: "6px",
+                  border: "1px solid var(--sidebar-border)",
+                  borderRadius: "8px",
                   padding: "5px 6px",
                   cursor: "pointer",
-                  color: "var(--fg-muted)",
+                  color: "var(--sidebar-muted)",
                   display: "flex", alignItems: "center", justifyContent: "center",
                   flexShrink: 0,
                   transition: "color 0.15s, border-color 0.15s",
@@ -661,7 +661,7 @@ function DashboardApp({ username, onLogout }: { username: string; onLogout: () =
             </>
           )}
           {collapsed && (
-            <button onClick={onLogout} title="Sign out" style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--fg-muted)", display: "flex", alignItems: "center", padding: "4px" }}>
+            <button onClick={onLogout} title="Sign out" style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--sidebar-muted)", display: "flex", alignItems: "center", padding: "4px" }}>
               <LogOut size={13} />
             </button>
           )}
@@ -671,7 +671,7 @@ function DashboardApp({ username, onLogout }: { username: string; onLogout: () =
               title={isDark ? "Switch to light theme" : "Switch to dark theme"}
               style={{
                 background: "transparent", border: "none",
-                cursor: "pointer", color: "var(--fg-muted)",
+                cursor: "pointer", color: "var(--sidebar-muted)",
                 display: "flex", alignItems: "center", padding: "4px",
               }}
             >

@@ -30,6 +30,7 @@ def _initialize_visual_worker() -> None:
     # Spawned workers do not inherit the daemon's in-memory activity registry.
     # Built-ins and user-authored flow modules must be imported in each worker.
     from gyrfalcon.flow import sample_activities  # noqa: F401
+    from gyrfalcon.flow import demo_activities  # noqa: F401
     from gyrfalcon.flow.registry import discover_flows, get_import_errors
 
     discover_flows()

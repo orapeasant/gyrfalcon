@@ -37,7 +37,7 @@ export function LogsPage() {
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Logs</h1>
         <div className="flex gap-3 items-center">

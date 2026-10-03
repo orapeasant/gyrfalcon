@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
@@ -17,7 +18,7 @@ class RuntimePort(Protocol):
     def update_run(self, run_id: str, **fields: Any) -> None: ...
     def create_node_visit(self, run_id: str, node_path: str, node_id: str,
                           node_kind: str, input_value: Any = None,
-                          state: str = "running") -> Any: ...
+                          state: str = "running", context_snapshot: Any = None) -> Any: ...
     def update_node_visit(self, visit_id: str, **fields: Any) -> None: ...
     def get_waiting_visit(self, run_id: str) -> dict | None: ...
     def list_node_visits(self, run_id: str) -> list[dict]: ...
@@ -181,14 +182,38 @@ class VisualExecutor:
             graph = self._graph_at(frame["graph_path"])
             node = self._nodes(graph)[frame["current"]]
             node_path = self._node_path(frame, node)
+            self._initialize_attrs(run_id, node_path, node, {})
+            retry_checkpoint = context.get("_retry_checkpoint")
+            if retry_checkpoint and retry_checkpoint.get("node_path") == node_path:
+                context.pop("_retry_checkpoint", None)
+                saved = retry_checkpoint["activity_context"]
+                activity_context = ActivityContext(
+                    run_id=run_id, node_path=node_path,
+                    incoming_value=deepcopy(saved.get("incoming_value")),
+                    inputs=deepcopy(saved.get("inputs") or {}),
+                    outputs=deepcopy(saved.get("outputs") or {}),
+                    flow_attributes=deepcopy(saved.get("flow_attributes") or {}),
+                    attributes=deepcopy(saved.get("attributes") or {}),
+                )
+            else:
+                activity_context = self._activity_context(run_id, context, frame, node)
+            context_snapshot = {
+                "incoming_value": deepcopy(activity_context.incoming_value),
+                "inputs": deepcopy(activity_context.inputs),
+                "outputs": deepcopy(activity_context.outputs),
+                "flow_attributes": deepcopy(activity_context.flow_attributes),
+                "attributes": deepcopy(activity_context.attributes),
+                "run_context": deepcopy(context),
+                "loop_state": deepcopy(loop_state),
+            }
             visit = self.store.create_node_visit(run_id, node_path, node["id"],
-                                                 node["type"], input_value=frame.get("incoming"))
+                                                 node["type"], input_value=frame.get("incoming"),
+                                                 context_snapshot=context_snapshot)
             visit_id = visit["id"] if isinstance(visit, dict) else str(visit)
             self.store.update_run(run_id, current_node_path=node_path)
             try:
                 if node["type"] == "process":
                     inner = self._process_graph(node)
-                    self._initialize_attrs(run_id, node_path, node, {})
                     child_path = f"{node_path}/flow"
                     self._initialize_attrs(run_id, child_path, inner, {})
                     start = next(n for n in inner["nodes"] if n["type"] == "start")
@@ -200,7 +225,8 @@ class VisualExecutor:
                     self.store.update_run(run_id, context=context,
                                           current_node_path=f"{child_path}/{start['id']}")
                     continue
-                result = self._execute_node(run_id, context, frame, node, visit_id)
+                result = self._execute_node(run_id, context, frame, node, visit_id,
+                                            activity_context=activity_context)
                 if isinstance(result, WaitResult):
                     context["waiting_visit_id"] = visit_id
                     self.store.update_node_visit(visit_id, state="waiting",
@@ -214,6 +240,8 @@ class VisualExecutor:
                                              transient=result.transient)
                 self._finish_node(run_id, context, loop_state, frame, graph,
                                   node, result, visit_id)
+                context_snapshot["attributes_after"] = self.store.get_attrs(run_id, node_path)
+                self.store.update_node_visit(visit_id, context_snapshot=context_snapshot)
             except Exception as exc:
                 error = {"type": type(exc).__name__, "message": str(exc), "node_path": node_path}
                 self.store.update_node_visit(visit_id, state="failed", error=error)
@@ -231,7 +259,8 @@ class VisualExecutor:
         raise RuntimeError("Flow ended without reaching End")
 
     def _execute_node(self, run_id: str, context: dict, frame: dict,
-                      node: dict, visit_id: str) -> ActivityResult | WaitResult:
+                      node: dict, visit_id: str, *,
+                      activity_context: ActivityContext | None = None) -> ActivityResult | WaitResult:
         kind = node["type"]
         if kind == "start":
             self._initialize_attrs(run_id, self._node_path(frame, node), node, {})
@@ -247,9 +276,10 @@ class VisualExecutor:
             if selected is None:
                 raise ValueError(f"End {node['id']!r} has ambiguous transient")
             return ActivityResult(selected, frame.get("incoming"))
-        path = self._node_path(frame, node)
-        self._initialize_attrs(run_id, path, node, {})
-        activity_context = self._activity_context(run_id, context, frame, node)
+        if activity_context is None:
+            path = self._node_path(frame, node)
+            self._initialize_attrs(run_id, path, node, {})
+            activity_context = self._activity_context(run_id, context, frame, node)
         if kind == "notification":
             if self.notification_dispatcher is None:
                 raise ValueError("Notification dispatcher is unavailable")

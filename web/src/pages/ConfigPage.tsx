@@ -39,7 +39,7 @@ export function ConfigPage() {
       />
       <button onClick={handleSave} style={{
         marginTop: "1rem", padding: "0.5rem 1rem",
-      background: "var(--btn-bg)", color: "#000",
+      background: "var(--btn-bg)", color: "var(--btn-fg)",
         border: "none", borderRadius: "4px", cursor: "pointer"
       }}>
         Save

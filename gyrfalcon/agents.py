@@ -107,7 +107,8 @@ def build_agent_kwargs(agent_cfg: dict) -> dict[str, Any]:
     # running agent regardless of server type.
     base_toolsets = list(agent_cfg.get("enabled_toolsets") or ["core"])
     mcp_toolsets = [f"mcp-{name}" for name in (agent_cfg.get("mcp_servers") or [])]
-    enabled_toolsets = base_toolsets + mcp_toolsets
+    plugin_toolsets = [f"plugin-{name}" for name in (agent_cfg.get("plugins") or [])]
+    enabled_toolsets = base_toolsets + mcp_toolsets + plugin_toolsets
 
     return {
         "base_url": base_url,

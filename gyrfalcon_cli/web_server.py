@@ -2171,6 +2171,40 @@ async def invoke_agent_api(request: Request, agent_id: str, body: AgentInvokeReq
     return await _run_agent_invoke(agent_id, body.message, body.session_id)
 
 
+@app.post("/api/agents/{agent_id}/sessions")
+async def start_agent_chat_session(request: Request, agent_id: str):
+    """Create an empty chat session bound to a saved Agent configuration.
+
+    The agentic loop starts when the user sends their first chat message. The
+    session's agent_id makes every turn use that Agent's saved prompt, model,
+    skills, toolsets, plugins and attached MCP servers.
+    """
+    _verify_token(request)
+    agent_cfg = next((a for a in _load_agents() if a["id"] == agent_id), None)
+    if agent_cfg is None:
+        raise HTTPException(404, "Agent not found")
+    if not agent_cfg.get("enabled"):
+        raise HTTPException(400, "Agent is disabled")
+
+    from gyrfalcon.agents import build_agent_kwargs
+    from gyrfalcon.gyrfalcon_state import SessionDB
+
+    agent_kwargs = build_agent_kwargs(agent_cfg)
+    session_id = str(_uuid_mod.uuid4())
+    session_db = SessionDB()
+    try:
+        session_db.create_session(
+            session_id=session_id,
+            source="chat",
+            model=agent_kwargs["model"],
+            title=f"{agent_cfg['name']} · Agent session",
+            agent_id=agent_id,
+        )
+    finally:
+        session_db.close()
+    return {"session_id": session_id, "agent_id": agent_id}
+
+
 # --- Agent Gateway (public endpoint, API-key auth) ---
 
 @app.post("/api/gateway/agents/{agent_id}")
@@ -2224,6 +2258,13 @@ async def _run_agent_invoke(agent_id: str, message: str, session_id: str | None)
 
     sid = session_id or str(_uuid.uuid4())
     agent_kwargs = build_agent_kwargs(agent_cfg)
+    plugin_manager = None
+    if agent_cfg.get("plugins"):
+        from gyrfalcon.plugins import PluginManager
+
+        plugin_manager = PluginManager()
+        plugin_manager.discover_and_load()
+        plugin_manager = plugin_manager.for_plugins(agent_cfg["plugins"])
 
     # ── Pre-create session so session.resume returns immediately ─────────────
     # We just create the session row — AIAgent will write the real messages.
@@ -2277,6 +2318,7 @@ async def _run_agent_invoke(agent_id: str, message: str, session_id: str | None)
                 session_db=run_db,
                 stream_delta_callback=_on_delta,
                 tool_progress_callback=_on_tool,
+                plugin_manager=plugin_manager,
             )
             result = agent.run_conversation(user_message=message)
             response = result.get("final_response", "")
@@ -2539,6 +2581,50 @@ async def create_sample_flow_graph(request: Request):
         definition_id = store.create("Hello sample", sample_graph())
         store.publish(definition_id)
         return {"id": definition_id}
+    finally:
+        store.close()
+
+
+@app.post("/api/flow/graphs/complex-sample/run")
+async def run_complex_sample_flow(request: Request):
+    """Publish and queue the deterministic ten-Activity visual runtime demo."""
+    principal = _require_flow_designer(request)
+    from gyrfalcon.flow import demo_activities  # noqa: F401
+
+    store = _graph_store()
+    try:
+        definition = next((row for row in store.list()
+                           if row["name"] == "Order Fulfillment Demo"), None)
+        if definition is None:
+            from gyrfalcon.flow.demo_activities import sample_graph
+            definition_id = store.create("Order Fulfillment Demo", sample_graph())
+        else:
+            definition_id = definition["id"]
+        version = store.latest_version(definition_id)
+        if version is None:
+            version = store.publish(definition_id)
+        runtime = store._store
+        short_name = f"order-demo-{definition_id[:8]}"
+        deployment = next((item for item in runtime.list_deployments()
+                           if item["short_name"] == short_name), None)
+        if deployment is None:
+            deployment = runtime.create_deployment(
+                name="Order Fulfillment Demo", short_name=short_name,
+                definition_id=definition_id, version=version,
+                user_id=principal.user_id, parameters={}, input_schema={}, paused=False,
+            )
+        from gyrfalcon.flow.demo_activities import SAMPLE_INPUTS
+        run = runtime.create_run(
+            definition_id, deployment["version"], SAMPLE_INPUTS, "demo",
+            user_id=principal.user_id, deployment_id=deployment["id"],
+            trigger_ref=short_name,
+        )
+        runtime.record_event(run["id"], "flow.queued", {"trigger": "demo"})
+        return {"definition_id": definition_id, "version": version,
+                "deployment_id": deployment["id"], "run_id": run["id"],
+                "state": run["state"]}
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from exc
     finally:
         store.close()
 
@@ -2971,9 +3057,8 @@ async def run_visual_deployment(request: Request, deployment_id: str,
         store.close()
 
 
-@app.post("/api/flow/endpoints/{short_name}")
-async def invoke_visual_endpoint(request: Request, short_name: str,
-                                 body: VisualRunRequest = VisualRunRequest()):
+async def _invoke_visual_endpoint(request: Request, short_name: str,
+                                  body: VisualRunRequest):
     principal = _verify_token(request)
     store = _visual_store()
     try:
@@ -2995,6 +3080,26 @@ async def invoke_visual_endpoint(request: Request, short_name: str,
         return {"run_id": run["id"], "state": run["state"]}
     finally:
         store.close()
+
+
+@app.post("/api/flow/endpoints/{short_name}", include_in_schema=False)
+async def invoke_visual_endpoint(request: Request, short_name: str,
+                                 body: VisualRunRequest = VisualRunRequest()):
+    """Compatibility path for invoking a published flow deployment."""
+    return await _invoke_visual_endpoint(request, short_name, body)
+
+
+@app.post("/v1/flow/{flow_name}/", name="invoke_flow_gateway")
+@app.post("/v1/flow/{flow_name}", include_in_schema=False)
+async def invoke_flow_gateway(request: Request, flow_name: str,
+                              body: VisualRunRequest = VisualRunRequest()):
+    """Invoke a published flow through the shared `/v1` gateway listener.
+
+    Authentication, deployment allow-list checks, input validation and
+    durable run queueing are deliberately shared with the legacy flow endpoint.
+    The HTTP request returns a run ID; workers execute it asynchronously.
+    """
+    return await _invoke_visual_endpoint(request, flow_name, body)
 
 
 @app.get("/api/flow/visual-runs/{run_id}")

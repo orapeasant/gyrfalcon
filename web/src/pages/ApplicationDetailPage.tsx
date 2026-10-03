@@ -12,7 +12,7 @@ import { Edit2, ToggleLeft, ToggleRight, ArrowLeft } from "lucide-react";
 
 const S = {
   page: {
-    padding: "1.5rem 2rem",
+    padding: 0,
     maxWidth: "820px",
     margin: "0 auto",
     color: "var(--fg)",
@@ -23,20 +23,20 @@ const S = {
     marginBottom: "1.75rem",
   } as React.CSSProperties,
 
-  badge: (color: string): React.CSSProperties => ({
+  badge: (tone: "success" | "muted" | "info"): React.CSSProperties => ({
     display: "inline-block",
     padding: "2px 8px",
     borderRadius: "12px",
     fontSize: "0.72rem",
     fontWeight: 600,
-    background: color,
-    color: "#fff",
+    background: tone === "success" ? "var(--success-bg)" : tone === "info" ? "var(--info-bg)" : "var(--sidebar-active)",
+    color: tone === "success" ? "var(--green)" : tone === "info" ? "var(--blue)" : "var(--fg-muted)",
     letterSpacing: "0.02em",
   }),
 
   section: {
     marginBottom: "1.5rem",
-    background: "var(--sidebar-bg)",
+    background: "var(--card)",
     border: "1px solid var(--border)",
     borderRadius: "8px",
     overflow: "hidden",
@@ -50,7 +50,7 @@ const S = {
     color: "var(--fg-muted)",
     textTransform: "uppercase" as const,
     letterSpacing: "0.08em",
-    background: "var(--sidebar-bg)",
+    background: "var(--card)",
   },
 
   sectionBody: {
@@ -140,13 +140,13 @@ export function ApplicationDetailPage() {
 
   if (loading) {
     return (
-      <div style={{ padding: "2rem", color: "var(--fg-muted)" }}>Loading…</div>
+      <div style={{ color: "var(--fg-muted)" }}>Loading…</div>
     );
   }
 
   if (!app) {
     return (
-      <div style={{ padding: "2rem", color: "var(--fg-muted)" }}>
+      <div style={{ color: "var(--fg-muted)" }}>
         Application not found.{" "}
         <span
           style={{ color: "var(--primary)", cursor: "pointer" }}
@@ -172,11 +172,11 @@ export function ApplicationDetailPage() {
               <h2 style={{ margin: 0, fontSize: "1.3rem", fontWeight: 700, color: "var(--fg)" }}>
                 ⚡ {app.name}
               </h2>
-              <span style={S.badge(app.enabled ? "#16a34a" : "#6b7280")}>
+              <span style={S.badge(app.enabled ? "success" : "muted")}>
                 {app.enabled ? "Enabled" : "Disabled"}
               </span>
               {app.version && (
-                <span style={S.badge("#3b82f6")}>v{app.version}</span>
+                <span style={S.badge("info")}>v{app.version}</span>
               )}
               {(app.tags || []).map(tag => (
                 <span key={tag} style={S.tag}>{tag}</span>
@@ -352,7 +352,7 @@ export function ApplicationDetailPage() {
               </>
             )}
             <span style={S.key}>Status</span>
-            <span style={{ fontSize: "0.84rem", color: app.enabled ? "#16a34a" : "#6b7280" }}>
+            <span style={{ fontSize: "0.84rem", color: app.enabled ? "var(--green)" : "var(--fg-muted)" }}>
               {app.enabled ? "● Enabled (visible in sidebar)" : "○ Disabled (hidden from sidebar)"}
             </span>
           </div>

@@ -19,7 +19,7 @@ interface SecretEntry {
 }
 
 const S = {
-  page:    { padding: "20px", maxWidth: "900px" } as React.CSSProperties,
+  page:    { padding: 0, maxWidth: "900px" } as React.CSSProperties,
   head:    { display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px", flexWrap: "wrap" as const },
   h1:      { fontSize: "16px", fontWeight: 700, margin: 0 } as React.CSSProperties,
   sub:     { fontSize: "12.5px", color: "var(--fg-muted)", marginBottom: "16px", maxWidth: "620px", lineHeight: 1.5 },
@@ -29,8 +29,8 @@ const S = {
     display: "inline-flex", alignItems: "center", gap: "6px",
   } as React.CSSProperties,
   primaryBtn: {
-    fontSize: "12px", padding: "6px 12px", borderRadius: "6px", border: "1px solid #456DE6",
-    background: "#456DE6", color: "#fff", cursor: "pointer",
+    fontSize: "12px", padding: "6px 12px", borderRadius: "8px", border: "1px solid var(--btn-bg)",
+    background: "var(--btn-bg)", color: "var(--btn-fg)", cursor: "pointer",
     display: "inline-flex", alignItems: "center", gap: "6px",
   } as React.CSSProperties,
   table:   { border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginTop: "12px" } as React.CSSProperties,
@@ -44,11 +44,11 @@ const S = {
   }),
   empty:   { color: "var(--fg-muted)", fontSize: "13px", padding: "24px 0", textAlign: "center" as const },
   modalOverlay: {
-    position: "fixed" as const, inset: 0, background: "rgba(0,0,0,0.4)",
+    position: "fixed" as const, inset: 0, background: "var(--overlay)",
     display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
   },
   modal: {
-    background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "10px",
+    background: "var(--card)", border: "1px solid var(--border)", borderRadius: "10px",
     padding: "20px", width: "420px", maxWidth: "90vw",
   } as React.CSSProperties,
   label:   { fontSize: "12px", fontWeight: 600, color: "var(--fg-muted)", display: "block", marginBottom: "4px", marginTop: "12px" },
@@ -189,7 +189,7 @@ export function SecretStorePage() {
                       <button style={S.actionBtn("var(--fg-muted)")} onClick={() => setEditing(s)}>
                         <Pencil size={11} /> Edit
                       </button>
-                      <button style={S.actionBtn("#ef4444")} onClick={() => remove(s)}><Trash2 size={11} /> Delete</button>
+                      <button style={S.actionBtn("var(--red)")} onClick={() => remove(s)}><Trash2 size={11} /> Delete</button>
                     </div>
                   </td>
                 </tr>

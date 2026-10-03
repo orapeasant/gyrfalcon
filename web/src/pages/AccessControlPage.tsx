@@ -8,9 +8,9 @@ type RoleRow = { id: string; name: string; label: string; menu_id: string | null
 type AccessData = { users: UserRow[]; groups: GroupRow[]; roles: RoleRow[]; menus: { id: string; name: string }[] };
 
 const input: React.CSSProperties = { width: "100%", boxSizing: "border-box", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", background: "var(--bg)", color: "var(--fg)", fontSize: 13 };
-const button: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid var(--border)", borderRadius: 6, padding: "7px 10px", background: "var(--sidebar-bg)", color: "var(--fg)", cursor: "pointer", fontSize: 12 };
+const button: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid var(--border)", borderRadius: 6, padding: "7px 10px", background: "var(--card)", color: "var(--fg)", cursor: "pointer", fontSize: 12 };
 const primary: React.CSSProperties = { ...button, border: 0, background: "var(--btn-bg)", color: "var(--btn-fg)", fontWeight: 600 };
-const panel: React.CSSProperties = { border: "1px solid var(--border)", borderRadius: 8, background: "var(--sidebar-bg)", padding: 16, marginBottom: 16 };
+const panel: React.CSSProperties = { border: "1px solid var(--border)", borderRadius: 8, background: "var(--card)", padding: 16, marginBottom: 16 };
 const label: React.CSSProperties = { display: "grid", gap: 5, color: "var(--fg-muted)", fontSize: 11, fontWeight: 600 };
 
 export function AccessControlPage({ initialTab = "users" }: { initialTab?: "users" | "roles" }) {
@@ -36,17 +36,17 @@ export function AccessControlPage({ initialTab = "users" }: { initialTab?: "user
   const tabs = [
     ["users", "Users", UsersRound], ["groups", "Groups", UsersRound], ["roles", "Roles", ShieldCheck],
   ] as const;
-  return <div style={{ padding: 20, maxWidth: 1120, margin: "0 auto", color: "var(--fg)" }}>
+  return <div style={{ padding: 0, maxWidth: 1120, margin: "0 auto", color: "var(--fg)" }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
       <div><h1 style={{ fontSize: 18, margin: 0 }}>Access Control</h1><div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 3 }}>Manage organization users, groups, and role access.</div></div>
       <button style={{ ...button, marginLeft: "auto" }} onClick={() => void load()}><RefreshCw size={13} /> Refresh</button>
     </div>
     <div role="tablist" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", marginBottom: 16 }}>
       {tabs.map(([key, title, Icon]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => { setTab(key); setError(""); setNotice(""); }}
-        style={{ ...button, border: 0, borderBottom: tab === key ? "2px solid #456DE6" : "2px solid transparent", borderRadius: 0, background: "transparent", color: tab === key ? "var(--fg)" : "var(--fg-muted)" }}><Icon size={14} />{title}</button>)}
+        style={{ ...button, border: 0, borderBottom: tab === key ? "2px solid var(--primary)" : "2px solid transparent", borderRadius: 0, background: "transparent", color: tab === key ? "var(--fg)" : "var(--fg-muted)" }}><Icon size={14} />{title}</button>)}
     </div>
-    {error && <div role="alert" style={{ ...panel, color: "#ef4444", borderColor: "#ef4444", marginBottom: 12 }}>{error}</div>}
-    {notice && <div role="status" style={{ ...panel, color: "#16a34a", marginBottom: 12 }}>{notice}</div>}
+    {error && <div role="alert" style={{ ...panel, color: "var(--red)", borderColor: "var(--red)", background: "var(--error-bg)", marginBottom: 12 }}>{error}</div>}
+    {notice && <div role="status" style={{ ...panel, color: "var(--green)", background: "var(--success-bg)", marginBottom: 12 }}>{notice}</div>}
     {loading ? <p style={{ color: "var(--fg-muted)" }}>Loading…</p> : tab === "users" ? <UsersPanel data={data} editing={editingUser} setEditing={setEditingUser} creating={newUser} setCreating={setNewUser} onSaved={async () => { setEditingUser(null); setNewUser(false); setNotice("User saved."); await load(); }} />
       : tab === "groups" ? <GroupsPanel groups={data.groups} users={data.users} draft={groupDraft} setDraft={setGroupDraft} onSaved={async () => { setGroupDraft(null); setNotice("Group saved."); await load(); }} />
         : <RolesPanel roles={data.roles} menus={data.menus} editing={editingRole} setEditing={setEditingRole} onSaved={async () => { setEditingRole(null); setNotice("Role saved."); await load(); }} />}
@@ -101,7 +101,7 @@ function UsersPanel({ data, editing, setEditing, creating, setCreating, onSaved 
         </fieldset>
       </div>
       {!creating && <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, marginTop: 12 }}><input type="checkbox" checked={disabled} onChange={e => setDisabled(e.target.checked)} />Account disabled</label>}
-      {error && <p style={{ color: "#ef4444", fontSize: 12 }}>{error}</p>}
+      {error && <p style={{ color: "var(--red)", fontSize: 12 }}>{error}</p>}
       <button style={{ ...primary, marginTop: 14 }} disabled={busy}><Save size={13} />{busy ? "Saving…" : "Save user"}</button>
     </form>}
     <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -111,7 +111,7 @@ function UsersPanel({ data, editing, setEditing, creating, setCreating, onSaved 
         <td style={td}>{u.email || "—"}</td><td style={td}>{u.roles.map(r => <Pill key={r}>{r}</Pill>)}</td>
         <td style={td}>{u.group_ids.map(id => data.groups.find(g => g.id === id)?.name).filter(Boolean).map(g => <Pill key={g}>{g}</Pill>) || "—"}</td>
         <td style={td}>{u.last_login_at ? new Date(u.last_login_at * 1000).toLocaleString() : "Never"}</td>
-        <td style={td}><span style={{ color: u.disabled ? "#ef4444" : "#16a34a" }}>{u.disabled ? "Disabled" : "Active"}</span></td>
+        <td style={td}><span style={{ color: u.disabled ? "var(--red)" : "var(--green)" }}>{u.disabled ? "Disabled" : "Active"}</span></td>
         <td style={td}><button style={button} onClick={() => { setCreating(false); setEditing(u); }}><KeyRound size={12} /> Manage</button></td>
       </tr>)}</tbody>
     </table></div>
@@ -136,13 +136,13 @@ function GroupsPanel({ groups, users, draft, setDraft, onSaved }: { groups: Grou
       <label style={label}>Group name<input style={input} required value={name} onChange={e => setName(e.target.value)} /></label>
       <label style={label}>Description<input style={input} value={description} onChange={e => setDescription(e.target.value)} /></label>
       <button style={primary} disabled={busy}><Save size={13} />Save</button><button type="button" style={button} onClick={() => setDraft(null)}>Cancel</button>
-      {error && <span style={{ gridColumn: "1 / -1", color: "#ef4444", fontSize: 12 }}>{error}</span>}
+      {error && <span style={{ gridColumn: "1 / -1", color: "var(--red)", fontSize: 12 }}>{error}</span>}
     </form>}
     <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
       <thead><tr>{["Group", "Description", "Members", ""].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
       <tbody>{groups.map(g => <tr key={g.id}><td style={td}><strong><UsersRound size={13} style={{ verticalAlign: "-2px", marginRight: 6 }} />{g.name}</strong></td><td style={td}>{g.description || "—"}</td>
         <td style={td}>{g.user_ids.map(id => users.find(u => u.id === id)?.display_name || users.find(u => u.id === id)?.username).filter(Boolean).join(", ") || "—"}</td>
-        <td style={td}><div style={{ display: "flex", gap: 5 }}><button style={button} onClick={() => setDraft(g)}>Edit</button><button style={{ ...button, color: "#ef4444" }} onClick={() => void remove(g)}><Trash2 size={12} /></button></div></td></tr>)}</tbody>
+        <td style={td}><div style={{ display: "flex", gap: 5 }}><button style={button} onClick={() => setDraft(g)}>Edit</button><button style={{ ...button, color: "var(--red)" }} onClick={() => void remove(g)}><Trash2 size={12} /></button></div></td></tr>)}</tbody>
     </table></div>
   </>;
 }
@@ -167,12 +167,12 @@ function RolesPanel({ roles, menus, editing, setEditing, onSaved }: { roles: Rol
       <label style={label}>Menu<select style={input} value={menuId} onChange={e => setMenuId(e.target.value)}><option value="">No menu</option>{menus.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
       <label style={label}>Description<input style={input} value={description} onChange={e => setDescription(e.target.value)} /></label>
       <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />Enabled</label>
-      {error && <div style={{ color: "#ef4444", fontSize: 12, gridColumn: "1 / -1" }}>{error}</div>}
+      {error && <div style={{ color: "var(--red)", fontSize: 12, gridColumn: "1 / -1" }}>{error}</div>}
       <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8 }}><button style={primary} disabled={busy}><Save size={13} />Save role</button><button type="button" style={button} onClick={() => setEditing(null)}>Cancel</button></div>
     </form>}
     <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
       <thead><tr>{["Role", "Menu", "Description", "Status", ""].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
-      <tbody>{roles.map(r => <tr key={r.id}><td style={td}><strong>{r.label || r.name}</strong><div style={{ color: "var(--fg-muted)", fontSize: 11 }}>{r.name}</div></td><td style={td}>{menus.find(m => m.id === r.menu_id)?.name || "—"}</td><td style={td}>{r.description || "—"}</td><td style={td}>{r.enabled ? "Enabled" : "Disabled"}</td><td style={td}><div style={{ display: "flex", gap: 5 }}><button style={button} onClick={() => setEditing(r)}>Edit</button><button style={{ ...button, color: "#ef4444" }} onClick={() => void remove(r)}><Trash2 size={12} /></button></div></td></tr>)}</tbody>
+      <tbody>{roles.map(r => <tr key={r.id}><td style={td}><strong>{r.label || r.name}</strong><div style={{ color: "var(--fg-muted)", fontSize: 11 }}>{r.name}</div></td><td style={td}>{menus.find(m => m.id === r.menu_id)?.name || "—"}</td><td style={td}>{r.description || "—"}</td><td style={td}>{r.enabled ? "Enabled" : "Disabled"}</td><td style={td}><div style={{ display: "flex", gap: 5 }}><button style={button} onClick={() => setEditing(r)}>Edit</button><button style={{ ...button, color: "var(--red)" }} onClick={() => void remove(r)}><Trash2 size={12} /></button></div></td></tr>)}</tbody>
     </table></div>
   </>;
 }

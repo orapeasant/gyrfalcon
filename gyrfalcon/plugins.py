@@ -87,7 +87,16 @@ class PluginManager:
         self._plugin_tools: dict[str, list[str]] = {}
         self._cli_commands: dict[str, dict] = {}
         self._loaded: set[str] = set()
+        self._enabled_plugins: frozenset[str] | None = None
         self._lock = threading.Lock()
+
+    def for_plugins(self, names: list[str] | tuple[str, ...] | set[str]) -> "PluginManager":
+        """Return a hook-filtered view for one saved Agent session."""
+        import copy
+
+        scoped = copy.copy(self)
+        scoped._enabled_plugins = frozenset(names)
+        return scoped
 
     def discover_and_load(self, extra_dirs: list[Path] | None = None) -> None:
         """Discover and load plugins from all sources."""
@@ -198,6 +207,8 @@ class PluginManager:
         logger.debug("Beginning of fire_hook")
         handlers = self._hooks.get(hook_name, [])
         for plugin_name, handler in handlers:
+            if self._enabled_plugins is not None and plugin_name not in self._enabled_plugins:
+                continue
             try:
                 result = handler(**kwargs)
                 if result is not None and hook_name in ("pre_tool_call", "transform_tool_result"):

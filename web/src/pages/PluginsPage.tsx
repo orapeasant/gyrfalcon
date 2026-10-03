@@ -32,10 +32,10 @@ export function PluginsPage() {
     loadPlugins();
   }
 
-  if (loading) return <div className="p-4">Loading plugins...</div>;
+  if (loading) return <div>Loading plugins...</div>;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}><h1 className="text-2xl font-bold">Plugins</h1><CollectionViewToggle view={view} onChange={setView} label="Plugin view" /></div>
 
       <div style={collectionStyle(view)}>

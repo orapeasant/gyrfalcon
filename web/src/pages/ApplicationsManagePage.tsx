@@ -100,7 +100,7 @@ function EnvEditor({ rows, onChange }: { rows: EnvRow[]; onChange: (rows: EnvRow
             onClick={() => removeRow(i)}
             style={{
               background: "transparent", border: "none", cursor: "pointer",
-              color: "#ef4444", padding: "2px 4px", display: "flex", alignItems: "center",
+              color: "var(--red)", padding: "2px 4px", display: "flex", alignItems: "center",
             }}
             title="Remove"
           >
@@ -274,7 +274,7 @@ export function ApplicationsManagePage() {
         width: "270px", minWidth: "200px", flexShrink: 0,
         borderRight: "1px solid var(--border)",
         display: "flex", flexDirection: "column",
-        background: "var(--sidebar-bg)",
+        background: "var(--card)",
       }}>
         <div style={{
           padding: "0.65rem 1rem",
@@ -332,7 +332,7 @@ export function ApplicationsManagePage() {
                   style={{
                     marginTop: "5px", flexShrink: 0,
                     width: "8px", height: "8px", borderRadius: "50%",
-                    background: app.enabled ? "#22c55e" : "var(--fg-subtle)",
+                    background: app.enabled ? "var(--green)" : "var(--fg-subtle)",
                     display: "inline-block", cursor: "pointer",
                     transition: "background 0.15s",
                   }}
@@ -386,7 +386,7 @@ export function ApplicationsManagePage() {
               padding: "0.55rem 1.25rem",
               borderBottom: "1px solid var(--border)",
               display: "flex", alignItems: "center", gap: "0.5rem",
-              background: "var(--sidebar-bg)", flexWrap: "wrap",
+              background: "var(--card)", flexWrap: "wrap",
             }}>
               <span style={{ fontWeight: 600, fontSize: "0.88rem", flex: 1, color: "var(--fg)" }}>
                 {creating ? "✨ New Application" : `⚡ ${selected?.name}`}
@@ -414,7 +414,7 @@ export function ApplicationsManagePage() {
                     <button
                       onClick={() => deleteApp(selected.id)}
                       style={{
-                        background: "#ef4444", color: "#fff", border: "none",
+                        background: "var(--danger-action-bg)", color: "var(--danger-action-fg)", border: "none",
                         borderRadius: "5px", padding: "3px 10px",
                         cursor: "pointer", fontSize: "0.78rem",
                       }}
@@ -436,7 +436,7 @@ export function ApplicationsManagePage() {
                       display: "flex", alignItems: "center",
                       background: "transparent", border: "1px solid var(--border)",
                       borderRadius: "5px", padding: "3px 8px",
-                      cursor: "pointer", color: "#ef4444",
+                      cursor: "pointer", color: "var(--red)",
                     }}
                   >
                     <Trash2 size={13} />
@@ -472,7 +472,7 @@ export function ApplicationsManagePage() {
               </button>
 
               {msg && (
-                <span style={{ fontSize: "0.78rem", color: msg.ok ? "#22c55e" : "#ef4444" }}>
+                <span style={{ fontSize: "0.78rem", color: msg.ok ? "var(--green)" : "var(--red)" }}>
                   {msg.ok ? "✓" : "✗"} {msg.text}
                 </span>
               )}

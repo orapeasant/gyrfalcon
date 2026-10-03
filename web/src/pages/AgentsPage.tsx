@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, fetchJSON } from "../lib/api";
 import {
   Plus, Trash2, X, Play, RefreshCw, Copy, Eye, EyeOff,
   ExternalLink, Globe, Edit2, Users, LayoutGrid, List,
@@ -116,14 +116,14 @@ function AgentCard({ agent, layout, onInvoke, onEdit, onDelete, onCopy }: {
     borderRadius: "5px",
     padding: "4px 7px",
     cursor: "pointer",
-    color: danger ? "#ef4444" : "var(--fg-muted)",
+    color: danger ? "var(--red)" : "var(--fg-muted)",
     display: "flex", alignItems: "center", justifyContent: "center",
     flexShrink: 0,
   });
 
   return (
     <div style={{
-      background: "var(--sidebar-bg)", border: "1px solid var(--border)",
+      background: "var(--card)", border: "1px solid var(--border)",
       borderRadius: layout === "cards" ? "7px" : "0", padding: layout === "cards" ? "0.55rem" : "0.45rem 0.65rem",
       boxSizing: "border-box",
       display: layout === "cards" ? "flex" : "grid",
@@ -141,9 +141,9 @@ function AgentCard({ agent, layout, onInvoke, onEdit, onDelete, onCopy }: {
         {/* Avatar */}
         <div style={{
           width: "36px", height: "36px", borderRadius: "8px",
-          background: agent.enabled ? "#456DE6" : "var(--fg-muted)",
+          background: agent.enabled ? "var(--primary)" : "var(--fg-muted)",
           display: "flex", alignItems: "center", justifyContent: "center",
-          color: "#fff", fontWeight: 700, fontSize: "14px", flexShrink: 0,
+          color: "var(--btn-fg)", fontWeight: 700, fontSize: "14px", flexShrink: 0,
         }}>
           {agent.name.charAt(0).toUpperCase()}
         </div>
@@ -154,14 +154,14 @@ function AgentCard({ agent, layout, onInvoke, onEdit, onDelete, onCopy }: {
             {agent.name}
             <span style={{
               fontSize: "0.68rem", padding: "1px 6px", borderRadius: "10px",
-              background: agent.enabled ? "rgba(34,197,94,0.12)" : "var(--sidebar-active)",
-              color: agent.enabled ? "#22c55e" : "var(--fg-muted)",
-              border: `1px solid ${agent.enabled ? "rgba(34,197,94,0.3)" : "var(--border)"}`,
+              background: agent.enabled ? "var(--success-bg)" : "var(--sidebar-active)",
+              color: agent.enabled ? "var(--green)" : "var(--fg-muted)",
+              border: `1px solid ${agent.enabled ? "var(--green)" : "var(--border)"}`,
             }}>
               {agent.enabled ? "enabled" : "disabled"}
             </span>
             {agent.gateway?.enabled && (
-              <span style={{ fontSize: "0.68rem", padding: "1px 6px", borderRadius: "10px", background: "rgba(69,109,230,0.12)", color: "#456DE6", border: "1px solid rgba(69,109,230,0.3)" }}>
+              <span style={{ fontSize: "0.68rem", padding: "1px 6px", borderRadius: "10px", background: "color-mix(in srgb, var(--blue) 12%, var(--card))", color: "var(--blue)", border: "1px solid color-mix(in srgb, var(--blue) 30%, var(--border))" }}>
                 <Globe size={9} style={{ display: "inline", marginRight: "2px" }} />gateway
               </span>
             )}
@@ -262,77 +262,124 @@ function AgentCard({ agent, layout, onInvoke, onEdit, onDelete, onCopy }: {
   );
 }
 
-// ── Invoke Dialog ─────────────────────────────────────────────────────────────
-function InvokeDialog({ agent, onClose }: { agent: Agent; onClose: () => void }) {
-  const navigate = useNavigate();
-  const [message, setMessage] = useState("");
-  const [running, setRunning]   = useState(false);
-  const [result, setResult]     = useState<{ session_id: string } | null>(null);
+function AgentTableRow({ agent, onInvoke, onEdit, onDelete, onCopy }: {
+  agent: Agent;
+  onInvoke: (a: Agent) => void;
+  onEdit: (a: Agent) => void;
+  onDelete: (a: Agent) => void;
+  onCopy: (a: Agent) => void;
+}) {
+  const [confirmDel, setConfirmDel] = useState(false);
+  const cell: React.CSSProperties = {
+    padding: "10px 12px", borderBottom: "1px solid var(--border)",
+    textAlign: "left", verticalAlign: "middle",
+  };
+  const action: React.CSSProperties = {
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
+    gap: "4px", padding: "5px 7px", border: "1px solid var(--border)",
+    borderRadius: "5px", background: "transparent", color: "var(--fg-muted)",
+    cursor: "pointer",
+  };
+  const capabilities = [...(agent.skills || []).map(x => `📚 ${x}`),
+    ...(agent.mcp_servers || []).map(x => `🖥 ${x}`),
+    ...(agent.enabled_toolsets || []).map(x => `🔧 ${x}`)];
 
-  async function run() {
-    if (!message.trim()) return;
-    setRunning(true);
+  return <tr>
+    <td style={{ ...cell, minWidth: "220px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
+        <div style={{ width: 32, height: 32, borderRadius: 7, flexShrink: 0,
+          display: "grid", placeItems: "center", color: "var(--btn-fg)", fontWeight: 700,
+          background: agent.enabled ? "var(--primary)" : "var(--fg-muted)" }}>
+          {agent.name.charAt(0).toUpperCase()}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: "var(--fg)" }}>{agent.name}</div>
+          {agent.description && <div title={agent.description} style={{ color: "var(--fg-muted)", fontSize: "0.76rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 300 }}>{agent.description}</div>}
+        </div>
+      </div>
+    </td>
+    <td style={{ ...cell, color: "var(--fg-muted)", whiteSpace: "nowrap" }}>{agent.model || "—"}</td>
+    <td style={{ ...cell, minWidth: 180 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        {capabilities.length ? capabilities.map((x, i) => <span key={`${i}-${x}`} style={{ fontSize: "0.72rem", padding: "2px 7px", borderRadius: 10, background: "var(--sidebar-active)", color: "var(--fg-muted)", border: "1px solid var(--border)" }}>{x}</span>) : <span style={{ color: "var(--fg-muted)" }}>—</span>}
+      </div>
+    </td>
+    <td style={{ ...cell, whiteSpace: "nowrap" }}>
+      <span style={{ color: agent.gateway?.enabled ? "var(--blue)" : "var(--fg-muted)" }}>{agent.gateway?.enabled ? "Enabled" : "—"}</span>
+    </td>
+    <td style={{ ...cell, whiteSpace: "nowrap" }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginRight: 10,
+        color: agent.enabled ? "var(--green)" : "var(--fg-muted)", fontSize: "0.78rem" }}>
+        {agent.enabled ? "Enabled" : "Disabled"}
+      </span>
+      <span style={{ display: "inline-flex", gap: 4, verticalAlign: "middle" }}>
+        <button onClick={() => onInvoke(agent)} disabled={!agent.enabled} title="Run agent" style={{ ...action, opacity: agent.enabled ? 1 : 0.4 }}><Play size={13} /></button>
+        <button onClick={() => onEdit(agent)} title="Edit agent" style={action}><Edit2 size={13} /></button>
+        <button onClick={() => onCopy(agent)} title="Duplicate agent" style={action}><Copy size={13} /></button>
+        {confirmDel ? <>
+          <button onClick={() => { onDelete(agent); setConfirmDel(false); }} title="Confirm delete" style={{ ...action, color: "var(--red)" }}><Trash2 size={13} /> Yes</button>
+          <button onClick={() => setConfirmDel(false)} title="Cancel" style={action}><X size={13} /></button>
+        </> : <button onClick={() => setConfirmDel(true)} title="Delete agent" style={{ ...action, color: "var(--red)" }}><Trash2 size={13} /></button>}
+      </span>
+    </td>
+  </tr>;
+}
+
+// ── Agent session confirmation ────────────────────────────────────────────────
+function AgentSessionDialog({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  const navigate = useNavigate();
+  const [starting, setStarting] = useState(false);
+
+  async function continueToChat() {
+    setStarting(true);
     try {
-      const res = await api.invokeAgent(agent.id, message.trim());
-      setResult(res);
-      // Navigate immediately so WebSocket subscribes before agent sends events
+      const res = await fetchJSON<{ session_id: string }>(`/api/agents/${agent.id}/sessions`, { method: "POST" });
       onClose();
       navigate(`/chat?session=${res.session_id}`);
     } catch (e: any) {
-      alert(e.message || "Invocation failed");
+      alert(e.message || "Could not start agent session");
+      setStarting(false);
     }
-    setRunning(false);
   }
 
   return (
     <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+      position: "fixed", inset: 0, background: "var(--overlay)",
       display: "flex", alignItems: "center", justifyContent: "center",
       zIndex: 2000,
-    }} onClick={onClose}>
+    }} onClick={starting ? undefined : onClose}>
       <div style={{
-        background: "var(--sidebar-bg)", border: "1px solid var(--border)",
+        background: "var(--card)", border: "1px solid var(--border)",
         borderRadius: "12px", padding: "1.5rem", width: "480px", maxWidth: "90vw",
-        boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
+        boxShadow: "var(--shadow-popover)",
       }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
           <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>
-            ⚡ Run: {agent.name}
+            Start chat with {agent.name}?
           </span>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--fg-muted)", display: "flex" }}>
+          <button onClick={onClose} disabled={starting} aria-label="Close" style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--fg-muted)", display: "flex" }}>
             <X size={16} />
           </button>
         </div>
-        {result ? (
-          <div style={{ color: "#22c55e", fontSize: "0.88rem", textAlign: "center", padding: "1rem 0" }}>
-            ✓ Agent started — opening session…
-          </div>
-        ) : (
-          <>
-            <textarea
-              value={message}
-              onChange={e => setMessage(e.target.value)}
-              placeholder={`Message to ${agent.name}…`}
-              rows={4}
-              style={{ ...inputSt(), resize: "vertical", lineHeight: 1.5 }}
-              autoFocus
-              onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) run(); }}
-            />
-            <div style={{ fontSize: "0.73rem", color: "var(--fg-muted)", marginTop: "4px", marginBottom: "12px" }}>
-              Ctrl+Enter to run
-            </div>
-            <button onClick={run} disabled={running || !message.trim()} style={{
-              width: "100%", background: message.trim() ? "var(--btn-bg)" : "var(--sidebar-active)",
-              color: message.trim() ? "var(--btn-fg)" : "var(--fg-muted)",
-              border: "none", borderRadius: "7px", padding: "8px",
-              cursor: running || !message.trim() ? "default" : "pointer",
-              fontWeight: 600, fontSize: "0.88rem",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
-            }}>
-              {running ? <><RefreshCw size={13} style={{ animation: "spin 1s linear infinite" }} /> Running…</> : <><Play size={13} /> Run</>}
-            </button>
-          </>
-        )}
+        <p style={{ margin: "0 0 1rem", fontSize: "0.82rem", color: "var(--fg-muted)", lineHeight: 1.55 }}>
+          You’ll go to Chat with a new session for this agent. Its instructions,
+          model, skills, toolsets, plugins, and attached MCP servers will be
+          active there. The agentic loop starts when you send your first message,
+          and you can continue interacting with it in that session.
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose} disabled={starting} style={{
+            border: "1px solid var(--border)", borderRadius: 7, padding: "7px 12px",
+            background: "transparent", color: "var(--fg)", cursor: starting ? "default" : "pointer",
+          }}>Cancel</button>
+          <button onClick={continueToChat} disabled={starting} style={{
+            border: "none", borderRadius: 7, padding: "7px 12px",
+            background: "var(--btn-bg)", color: "var(--btn-fg)", cursor: starting ? "wait" : "pointer",
+            fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6,
+          }}>
+            {starting ? <><RefreshCw size={13} style={{ animation: "spin 1s linear infinite" }} /> Starting…</> : "Continue to Chat"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -514,7 +561,7 @@ export function AgentsPage() {
         padding: "0.65rem 1.25rem",
         borderBottom: "1px solid var(--border)",
         display: "flex", alignItems: "center", gap: "10px",
-        background: "var(--sidebar-bg)", flexShrink: 0,
+        background: "var(--card)", flexShrink: 0,
       }}>
         <span style={{ fontWeight: 700, fontSize: "0.92rem", flex: 1 }}>Agents</span>
         {view === "list" && (
@@ -544,7 +591,7 @@ export function AgentsPage() {
 
       {/* ── Agent cards or list ── */}
       {view === "list" && (
-        <div style={{ flex: 1, overflow: "auto", padding: "1.25rem" }}>
+        <div style={{ flex: 1, overflow: "auto", padding: 0 }}>
           {loading && <div style={{ color: "var(--fg-muted)" }}>Loading…</div>}
           {!loading && agents.length === 0 && (
             <div style={{ textAlign: "center", color: "var(--fg-muted)", padding: "3rem 0" }}>
@@ -552,9 +599,39 @@ export function AgentsPage() {
               <div>No agents yet. Click <strong>New Agent</strong> to create one.</div>
             </div>
           )}
-          <div style={agentLayout === "cards"
-            ? { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "8px", alignItems: "start" }
-            : { display: "flex", flexDirection: "column", gap: "0.65rem" }}>
+          {agentLayout === "list" ? (
+            <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 7 }}>
+              <table style={{ width: "100%", minWidth: 850, borderCollapse: "collapse", background: "var(--card)" }}>
+                <thead>
+                  <tr style={{ background: "var(--bg)", color: "var(--fg-muted)", fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    {["Agent", "Model", "Capabilities", "Gateway", "Status / Actions"].map(title =>
+                      <th key={title} scope="col" style={{ padding: "9px 12px", textAlign: "left", borderBottom: "1px solid var(--border)" }}>{title}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {agents.map(a => <AgentTableRow key={a.id} agent={a}
+                    onInvoke={a => setInvokeTarget(a)}
+                    onEdit={a => selectAgent(a)}
+                    onDelete={async a => { await api.deleteAgent(a.id); await load(); }}
+                    onCopy={async a => {
+                      const payload = {
+                        name: `${a.name}-copy`, description: a.description,
+                        instructions: a.instructions, enabled: a.enabled,
+                        model: a.model, provider: a.provider,
+                        max_iterations: a.max_iterations,
+                        mcp_servers: a.mcp_servers, skills: a.skills,
+                        enabled_toolsets: a.enabled_toolsets, plugins: a.plugins,
+                        gateway_enabled: a.gateway?.enabled ?? false,
+                        tags: a.tags,
+                      };
+                      const created = await api.createAgent(payload);
+                      await load(created.id);
+                    }} />)}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "8px", alignItems: "start" }}>
             {agents.map(a => (
               <AgentCard key={a.id} agent={a} layout={agentLayout}
                 onInvoke={a => setInvokeTarget(a)}
@@ -576,13 +653,14 @@ export function AgentsPage() {
                 }}
               />
             ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* ── Edit form ── */}
       {view === "edit" && (
-        <div style={{ flex: 1, overflow: "auto", padding: "1.25rem 1.5rem" }}>
+        <div style={{ flex: 1, overflow: "auto", padding: 0 }}>
           {/* Toolbar */}
           <div style={{
             display: "flex", alignItems: "center", gap: "8px",
@@ -595,11 +673,11 @@ export function AgentsPage() {
               deleteConfirm === selected.id ? (
                 <>
                   <span style={{ fontSize: "0.8rem", color: "var(--fg-muted)" }}>Delete?</span>
-                  <button onClick={() => deleteAgent(selected.id)} style={{ background: "#ef4444", color: "#fff", border: "none", borderRadius: "5px", padding: "4px 12px", cursor: "pointer", fontSize: "0.8rem" }}>Yes</button>
+                  <button onClick={() => deleteAgent(selected.id)} style={{ background: "var(--danger-action-bg)", color: "var(--danger-action-fg)", border: "none", borderRadius: "8px", padding: "4px 12px", cursor: "pointer", fontSize: "0.8rem" }}>Yes</button>
                   <button onClick={() => setDeleteConfirm(null)} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "5px", padding: "4px 10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--fg)" }}>No</button>
                 </>
               ) : (
-                <button onClick={() => setDeleteConfirm(selected.id)} style={{ display: "flex", alignItems: "center", background: "transparent", border: "1px solid var(--border)", borderRadius: "5px", padding: "4px 8px", cursor: "pointer", color: "#ef4444" }}>
+                <button onClick={() => setDeleteConfirm(selected.id)} style={{ display: "flex", alignItems: "center", background: "transparent", border: "1px solid var(--border)", borderRadius: "8px", padding: "4px 8px", cursor: "pointer", color: "var(--red)" }}>
                   <Trash2 size={13} />
                 </button>
               )
@@ -613,7 +691,7 @@ export function AgentsPage() {
             }}>
               {saving ? "Saving…" : "Save"}
             </button>
-            {msg && <span style={{ fontSize: "0.78rem", color: msg.ok ? "#22c55e" : "#ef4444" }}>{msg.ok ? "✓" : "✗"} {msg.text}</span>}
+            {msg && <span style={{ fontSize: "0.78rem", color: msg.ok ? "var(--green)" : "var(--red)" }}>{msg.ok ? "✓" : "✗"} {msg.text}</span>}
           </div>
 
           <div style={{ maxWidth: "760px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 1.5rem" }}>
@@ -717,8 +795,8 @@ export function AgentsPage() {
                       <div style={{ marginTop: "8px" }}>
                         {regenConfirm ? (
                           <span style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                            <span style={{ color: "#ef4444" }}>Regenerate key?</span>
-                            <button onClick={regenKey} style={{ background: "#ef4444", color: "#fff", border: "none", borderRadius: "4px", padding: "2px 8px", cursor: "pointer", fontSize: "0.75rem" }}>Yes</button>
+                            <span style={{ color: "var(--red)" }}>Regenerate key?</span>
+                            <button onClick={regenKey} style={{ background: "var(--danger-action-bg)", color: "var(--danger-action-fg)", border: "none", borderRadius: "6px", padding: "2px 8px", cursor: "pointer", fontSize: "0.75rem" }}>Yes</button>
                             <button onClick={() => setRegenConfirm(false)} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: "4px", padding: "2px 6px", cursor: "pointer", fontSize: "0.75rem" }}>No</button>
                           </span>
                         ) : (
@@ -739,7 +817,7 @@ export function AgentsPage() {
 
       {/* Invoke dialog */}
       {invokeTarget && (
-        <InvokeDialog agent={invokeTarget} onClose={() => setInvokeTarget(null)} />
+        <AgentSessionDialog agent={invokeTarget} onClose={() => setInvokeTarget(null)} />
       )}
     </div>
   );

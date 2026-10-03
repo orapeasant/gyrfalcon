@@ -208,7 +208,7 @@ export function TokenomicsReportPage() {
                 const height = Math.max(2, (amount / maxCost) * 155);
                 const x = 50 + index * (width + gap);
                 const y = 175 - height;
-                return <g key={period}><title>{`${period}: ${money(amount)}`}</title><rect x={x} y={y} width={width} height={height} rx="3" fill="var(--primary)" opacity="0.85" /><text x={x + width / 2} y="198" textAnchor="middle" fill="var(--fg-muted)" fontSize="9">{period.slice(-5)}</text></g>;
+                return <g key={period}><title>{`${period}: ${money(amount)}`}</title><rect x={x} y={y} width={width} height={height} rx="3" fill="var(--blue)" opacity="0.85" /><text x={x + width / 2} y="198" textAnchor="middle" fill="var(--fg-muted)" fontSize="9">{period.slice(-5)}</text></g>;
               })}
               <line x1="42" y1="176" x2={Math.max(720, periods.length * 34) - 12} y2="176" stroke="var(--color-border)" />
             </svg>

@@ -395,13 +395,14 @@ class TUIGatewayServer:
             stream_delta_callback=self._on_stream_delta,
             thinking_delta_callback=self._on_thinking_block,
             tool_progress_callback=self._on_tool_progress,
-            plugin_manager=self._plugin_manager,
+            plugin_manager=getattr(self, "_active_plugin_manager", self._plugin_manager),
         )
         self._session_id = self._agent.session_id
         return self._agent
 
     def _agent_kwargs_for_session(self) -> Optional[dict]:
         """AIAgent kwargs from the saved Agent config that started this session, if any."""
+        self._active_plugin_manager = self._plugin_manager
         if not self._session_id:
             return None
         session = self._session_db.get_session(self._session_id)
@@ -413,6 +414,7 @@ class TUIGatewayServer:
         if not agent_cfg:
             logger.warning(f"Session {self._session_id} references missing agent {agent_id}")
             return None
+        self._active_plugin_manager = self._plugin_manager.for_plugins(agent_cfg.get("plugins") or [])
         return build_agent_kwargs(agent_cfg)
 
     def _resolve_credentials(self, provider_name: str) -> tuple[Optional[str], Optional[str], Optional[str]]:

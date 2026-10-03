@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  History, RefreshCw, RotateCcw, Search, Trash2,
+  History, RefreshCw, RotateCcw, Search, Trash2, FlaskConical,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { FlowRunGraph, type FlowVisit } from "./FlowRunGraph";
+import type { FlowGraph } from "./flowDesignerTypes";
 
 type Run = {
   id: string; definition_id: string; flow_name?: string; version: number; state: string;
@@ -12,11 +14,11 @@ type Run = {
   business_unit?: string; organization_name?: string; user_name?: string; user_email?: string;
   tenant_id: string; user_id: string; error?: unknown; result?: unknown;
 };
-type Visit = {
+type Visit = FlowVisit & {
   id: string; node_id: string; node_path: string; node_kind: string; state: string;
   transient?: string; error?: unknown; started_at?: number; finished_at?: number; attempt: number;
 };
-type RunDetail = Run & { nodes: Visit[]; graph?: unknown };
+type RunDetail = Run & { nodes: Visit[]; graph?: FlowGraph };
 
 const PAGE_SIZES = [20, 50, 100];
 const fmtDate = (ts?: number) => ts ? new Date(ts * 1000).toLocaleString() : "—";
@@ -25,7 +27,7 @@ const terminal = (state: string) => ["completed", "failed", "cancelled", "crashe
 const failed = (state: string) => ["failed", "crashed"].includes(state);
 
 const S = {
-  page: { padding: "20px", maxWidth: "1100px" } as React.CSSProperties,
+  page: { padding: 0, maxWidth: "1100px" } as React.CSSProperties,
   head: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px", flexWrap: "wrap" as const },
   h1: { fontSize: "16px", fontWeight: 700, margin: 0 } as React.CSSProperties,
   count: { fontSize: "12px", color: "var(--fg-muted)" } as React.CSSProperties,
@@ -36,7 +38,7 @@ const S = {
   table: { border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" } as React.CSSProperties,
   th: { textAlign: "left" as const, padding: "9px 12px", fontSize: "10.5px", fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: "var(--fg-muted)", borderBottom: "1px solid var(--border)", background: "var(--card)", whiteSpace: "nowrap" as const },
   td: { padding: "9px 12px", verticalAlign: "middle" as const, fontSize: "12.5px", color: "var(--fg)" },
-  iconBtn: (danger = false, disabled = false): React.CSSProperties => ({ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "5px", background: "transparent", border: "1px solid var(--border)", borderRadius: "5px", padding: "5px 8px", cursor: disabled ? "default" : "pointer", color: danger ? "#ef4444" : "var(--fg-muted)", opacity: disabled ? 0.45 : 1, fontSize: "11.5px" }),
+  iconBtn: (danger = false, disabled = false): React.CSSProperties => ({ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "5px", background: "transparent", border: "1px solid var(--border)", borderRadius: "5px", padding: "5px 8px", cursor: disabled ? "default" : "pointer", color: danger ? "var(--red)" : "var(--fg-muted)", opacity: disabled ? 0.45 : 1, fontSize: "11.5px" }),
   actionBar: { display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", background: "var(--sidebar-active)", borderBottom: "1px solid var(--border)", fontSize: "12px" } as React.CSSProperties,
   empty: { padding: "40px", textAlign: "center" as const, color: "var(--fg-muted)", border: "1px dashed var(--border)", borderRadius: "8px" } as React.CSSProperties,
   detail: { background: "var(--card)", borderTop: "1px solid var(--border)", padding: "14px 20px" } as React.CSSProperties,
@@ -44,8 +46,8 @@ const S = {
 };
 
 const STATE_COLORS: Record<string, string> = {
-  queued: "#a855f7", running: "#456de6", waiting: "#f59e0b",
-  completed: "#22c55e", failed: "#ef4444", crashed: "#ef4444", cancelled: "#71717a",
+  queued: "var(--purple)", running: "var(--blue)", waiting: "var(--warning)",
+  completed: "var(--green)", failed: "var(--red)", crashed: "var(--red)", cancelled: "var(--fg-muted)",
 };
 
 export function FlowInstancesPage() {
@@ -78,6 +80,22 @@ export function FlowInstancesPage() {
   useEffect(() => { const id = setTimeout(load, 250); return () => clearTimeout(id); }, [load]);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const allSelected = runs.length > 0 && runs.every((run) => selected.has(run.id));
+  const expandedDetail = expanded ? details[expanded] : undefined;
+  const expandedState = expandedDetail && typeof expandedDetail === "object" ? expandedDetail.state : "";
+
+  useEffect(() => {
+    if (!expanded || !expandedState || terminal(expandedState)) return;
+    const timer = window.setInterval(() => {
+      api.getVisualRun(expanded).then((data) => {
+        setDetails((old) => ({ ...old, [expanded]: data }));
+        setRuns((old) => old.map((run) => run.id === expanded
+          ? { ...run, state: data.state, current_node_path: data.current_node_path,
+              error: data.error, result: data.result, finished_at: data.finished_at }
+          : run));
+      }).catch(() => undefined);
+    }, 1800);
+    return () => window.clearInterval(timer);
+  }, [expanded, expandedState]);
 
   async function toggleDetails(run: Run) {
     if (expanded === run.id) { setExpanded(null); return; }
@@ -103,6 +121,20 @@ export function FlowInstancesPage() {
     finally { markBusy(run.id, false); }
   }
 
+  async function runDemo() {
+    setMessage("");
+    try {
+      const result = await api.runComplexSampleFlow();
+      setQuery(""); setState(""); setPage(0);
+      setExpanded(result.run_id);
+      const detail = await api.getVisualRun(result.run_id);
+      setDetails((old) => ({ ...old, [result.run_id]: detail }));
+      const pageData = await api.listVisualRuns({ limit: pageSize, offset: 0 });
+      setRuns(pageData.runs || []); setTotal(pageData.total || 0); setSelected(new Set());
+      setMessage(`Published v${result.version} and queued the 10-Activity sample as ${result.run_id}. The flow daemon will execute it.`);
+    } catch (error: any) { setMessage(error.message || "Could not queue the sample flow"); }
+  }
+
   async function rewind(run: Run) {
     markBusy(run.id, true); setMessage("");
     try { const result = await api.rewindVisualRun(run.id); setMessage(`New run started from the beginning: ${result.run_id}`); setPage(0); await load(); }
@@ -125,6 +157,7 @@ export function FlowInstancesPage() {
   return <div style={S.page}>
     <header style={S.head}>
       <h1 style={S.h1}>Flow Instances</h1><span style={S.count}>{total.toLocaleString()}</span>
+      <button type="button" style={S.iconBtn()} onClick={runDemo} title="Publish and execute the branching sample flow"><FlaskConical size={13} /> Run sample flow</button>
       <div style={S.tools}>
         <select aria-label="Filter by state" style={S.select} value={state} onChange={(e) => { setState(e.target.value); setPage(0); }}>
           <option value="">All states</option><option value="queued">Queued</option><option value="running">Running</option><option value="waiting">Waiting</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="crashed">Crashed</option><option value="cancelled">Cancelled</option>
@@ -170,14 +203,17 @@ export function FlowInstancesPage() {
               </td>
             </tr>
             {opened && <tr><td colSpan={7} style={{ padding: 0 }}><div style={S.detail}>
-              <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 8 }}>Execution trajectory</div>
-              {detail === "loading" || !detail ? <div style={S.count}>Loading trajectory…</div> : typeof detail === "string" ? <div style={{ color: "#ef4444" }}>{detail}</div> : <>
-                {(detail.nodes || []).map((node) => <div key={node.id} style={{ display: "grid", gridTemplateColumns: "minmax(130px, 1fr) 90px 100px 140px", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
-                  <span><strong>{node.node_id}</strong><small style={{ display: "block", color: "var(--fg-muted)" }}>{node.node_kind} · visit {node.attempt}</small></span><span>{label(node.state)}</span><span>{node.transient ? `→ ${node.transient}` : "—"}</span><span style={{ color: "var(--fg-muted)" }}>{fmtDate(node.started_at)}</span>
-                  {Boolean(node.error) && <pre style={{ gridColumn: "1 / -1", whiteSpace: "pre-wrap", color: "#ef4444" }}>{JSON.stringify(node.error, null, 2)}</pre>}
-                </div>)}
+              <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 8 }}>Execution graph · select a node to inspect its context</div>
+              {detail === "loading" || !detail ? <div style={S.count}>Loading trajectory…</div> : typeof detail === "string" ? <div style={{ color: "var(--red)" }}>{detail}</div> : <>
+                {detail.graph ? <FlowRunGraph graph={detail.graph} visits={detail.nodes || []} /> : <div style={{ color: "var(--fg-muted)" }}>This run has no published visual graph snapshot.</div>}
+                <details style={{ marginTop: 12 }}><summary style={{ cursor: "pointer", fontSize: 11, color: "var(--fg-muted)" }}>Visit history ({(detail.nodes || []).length})</summary>
+                  {(detail.nodes || []).map((node) => <div key={node.id} style={{ display: "grid", gridTemplateColumns: "minmax(130px, 1fr) 90px 100px 140px", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
+                    <span><strong>{node.node_id}</strong><small style={{ display: "block", color: "var(--fg-muted)" }}>{node.node_kind} · attempt {node.attempt}</small></span><span>{label(node.state)}</span><span>{node.transient ? `→ ${node.transient}` : "—"}</span><span style={{ color: "var(--fg-muted)" }}>{fmtDate(node.started_at)}</span>
+                    {Boolean(node.error) && <pre style={{ gridColumn: "1 / -1", whiteSpace: "pre-wrap", color: "var(--red)" }}>{JSON.stringify(node.error, null, 2)}</pre>}
+                  </div>)}
+                </details>
                 {run.current_node_path && <div style={{ marginTop: 9, fontSize: 11.5, color: "var(--fg-muted)" }}>Current / failed activity: <code>{run.current_node_path}</code></div>}
-                {Boolean(run.error) && <pre style={{ whiteSpace: "pre-wrap", color: "#ef4444" }}>{JSON.stringify(run.error, null, 2)}</pre>}
+                {Boolean(run.error) && <pre style={{ whiteSpace: "pre-wrap", color: "var(--red)" }}>{JSON.stringify(run.error, null, 2)}</pre>}
                 {run.result != null && <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(run.result, null, 2)}</pre>}
               </>}
             </div></td></tr>}
