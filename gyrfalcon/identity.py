@@ -71,11 +71,12 @@ class Principal:
     @property
     def is_operator(self) -> bool:
         """May see and act on the whole tenant, not just its own rows (§17.6)."""
-        return self.has_role(ROLE_OPERATOR, ROLE_ADMIN)
+        return self.has_role(ROLE_OPERATOR, ROLE_ADMIN, ROLE_SYSTEM_ADMIN)
 
 
 ROLE_OPERATOR = "operator"
 ROLE_ADMIN = "admin"
+ROLE_SYSTEM_ADMIN = "system_admin"
 
 #: The implicit identity of a single-user install. Not a bypass: rows are
 #: genuinely owned by "local" and filter like anyone else's, which is what

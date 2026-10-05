@@ -60,6 +60,16 @@ def _tenant_of(scope: Scope) -> str:
     return scope.tenant_id
 
 
+def _application_id(conn, application_id: Optional[str]) -> str:
+    if application_id:
+        row = conn.fetchone("SELECT id FROM fnd_applications WHERE id = ?", (application_id,))
+    else:
+        row = conn.fetchone("SELECT id FROM fnd_applications WHERE code = 'FND'")
+    if row is None:
+        raise NavStructureError("Application is required; create the FND Foundation application first")
+    return row["id"]
+
+
 class NavStructureError(ValueError):
     """A write that would produce a tree the resolver cannot walk."""
 
@@ -100,12 +110,14 @@ class NavStore:
     # -- pages (global) -----------------------------------------------------
 
     def create_page(self, key: str, route: str, label: str,
-                    icon: Optional[str] = None, enabled: bool = True) -> Page:
+                    icon: Optional[str] = None, enabled: bool = True,
+                    app_key: str = "fnd") -> Page:
         page_id = _new_id()
         with self._db.connect() as conn:
             conn.execute(
                 sql.insert_page(),
-                (page_id, key, route, label, icon, 1 if enabled else 0, time.time()),
+                (page_id, key, route, app_key, label, icon,
+                 1 if enabled else 0, time.time()),
             )
         found = self.get_page_by_key(key)
         if found is None:                       # pragma: no cover - insert_ignore raced
@@ -126,6 +138,12 @@ class NavStore:
         with self._db.connect() as conn:
             return [Page.from_row(r) for r in conn.fetchall(sql.LIST_PAGES)]
 
+    def set_page_app_key(self, key: str, app_key: str) -> None:
+        if app_key not in {"aie", "wf", "fnd"}:
+            raise ValueError(f"unsupported page app key: {app_key!r}")
+        with self._db.connect() as conn:
+            conn.execute(sql.UPDATE_PAGE_APP, (app_key, key))
+
     def update_page(self, page_id: str, route: str, label: str,
                     icon: Optional[str], enabled: bool) -> Optional[Page]:
         with self._db.connect() as conn:
@@ -144,17 +162,19 @@ class NavStore:
                         icon: Optional[str] = None, params: Optional[dict] = None,
                         enabled: bool = True, active_from: Optional[float] = None,
                         active_to: Optional[float] = None,
+                        application_id: Optional[str] = None,
                         scope: Optional[Scope] = None) -> Function:
         sc = current_scope(scope).tenant_wide()
         tenant = _tenant_of(sc)
         now = time.time()
         fn_id = _new_id()
         with self._db.connect() as conn:
+            app_id = _application_id(conn, application_id)
             conn.execute(
                 sql.insert_function(),
                 (fn_id, key, name, icon, kind, target,
                  json.dumps(params) if params else None,
-                 1 if enabled else 0, active_from, active_to, now, now, tenant),
+                 1 if enabled else 0, active_from, active_to, now, now, tenant, app_id),
             )
             self._bump(conn, tenant)
         found = self.get_function_by_key(key, scope=sc)
@@ -186,14 +206,16 @@ class NavStore:
                         params: Optional[dict] = None, enabled: bool = True,
                         active_from: Optional[float] = None,
                         active_to: Optional[float] = None,
+                        application_id: Optional[str] = None,
                         scope: Optional[Scope] = None) -> Optional[Function]:
         sc = current_scope(scope)
         stmt, sp = sql.update_function(sc)
         with self._db.connect() as conn:
+            app_id = _application_id(conn, application_id)
             conn.execute(stmt, (name, icon, kind, target,
                                 json.dumps(params) if params else None,
                                 1 if enabled else 0, active_from, active_to,
-                                time.time(), *sp, function_id))
+                                time.time(), app_id, *sp, function_id))
             self._bump(conn, _tenant_of(sc.tenant_wide()))
         return self.get_function(function_id, scope=sc)
 
@@ -211,16 +233,18 @@ class NavStore:
     def create_menu(self, name: str, *, icon: Optional[str] = None,
                     enabled: bool = True, active_from: Optional[float] = None,
                     active_to: Optional[float] = None,
+                    application_id: Optional[str] = None,
                     menu_id: Optional[str] = None,
                     scope: Optional[Scope] = None) -> Menu:
         sc = current_scope(scope).tenant_wide()
         now = time.time()
         menu_id = menu_id or _new_id()
         with self._db.connect() as conn:
+            app_id = _application_id(conn, application_id)
             conn.execute(
                 sql.insert_menu(),
                 (menu_id, name, icon, 1 if enabled else 0, active_from,
-                 active_to, now, now, _tenant_of(sc)),
+                 active_to, now, now, _tenant_of(sc), app_id),
             )
             self._bump(conn, _tenant_of(sc))
         created = self.get_menu(menu_id, scope=sc)
@@ -242,12 +266,14 @@ class NavStore:
     def update_menu(self, menu_id: str, *, name: str, icon: Optional[str] = None,
                     enabled: bool = True, active_from: Optional[float] = None,
                     active_to: Optional[float] = None,
+                    application_id: Optional[str] = None,
                     scope: Optional[Scope] = None) -> Optional[Menu]:
         sc = current_scope(scope)
         stmt, sp = sql.update_menu(sc)
         with self._db.connect() as conn:
+            app_id = _application_id(conn, application_id)
             conn.execute(stmt, (name, icon, 1 if enabled else 0, active_from,
-                                active_to, time.time(), *sp, menu_id))
+                                active_to, time.time(), app_id, *sp, menu_id))
             self._bump(conn, _tenant_of(sc.tenant_wide()))
         return self.get_menu(menu_id, scope=sc)
 
@@ -276,6 +302,7 @@ class NavStore:
                  icon_override: Optional[str] = None, enabled: bool = True,
                  active_from: Optional[float] = None,
                  active_to: Optional[float] = None,
+                 application_id: Optional[str] = None,
                  scope: Optional[Scope] = None) -> MenuItem:
         """Add a leaf or a branch. Refuses anything that is neither or both,
         and refuses a branch that would close a cycle (§3.1)."""
@@ -294,11 +321,12 @@ class NavStore:
                 )
         item_id = _new_id()
         with self._db.connect() as conn:
+            app_id = _application_id(conn, application_id)
             conn.execute(
                 sql.insert_menu_item(),
                 (item_id, menu_id, sort_order, function_id, ref_menu_id, access,
                  label_override, icon_override, 1 if enabled else 0,
-                 active_from, active_to, _tenant_of(sc)),
+                 active_from, active_to, _tenant_of(sc), app_id),
             )
             self._bump(conn, _tenant_of(sc))
         created = self.get_item(item_id, scope=sc)
@@ -331,6 +359,7 @@ class NavStore:
                     icon_override: Optional[str] = None, enabled: bool = True,
                     active_from: Optional[float] = None,
                     active_to: Optional[float] = None,
+                    application_id: Optional[str] = None,
                     scope: Optional[Scope] = None) -> Optional[MenuItem]:
         """Placement only. What an item *points at* is not editable: repointing
         a leaf at a different Function is a different grant wearing the same
@@ -339,9 +368,10 @@ class NavStore:
         sc = current_scope(scope)
         stmt, sp = sql.update_menu_item(sc)
         with self._db.connect() as conn:
+            app_id = _application_id(conn, application_id)
             conn.execute(stmt, (sort_order, access, label_override, icon_override,
                                 1 if enabled else 0, active_from, active_to,
-                                *sp, item_id))
+                                app_id, *sp, item_id))
             self._bump(conn, _tenant_of(sc.tenant_wide()))
         return self.get_item(item_id, scope=sc)
 
@@ -401,6 +431,25 @@ class NavStore:
         stmt, params = sql.list_roles(current_scope(scope))
         with self._db.connect() as conn:
             return [Role.from_row(r) for r in conn.fetchall(stmt, params)]
+
+    def role_names_for_user(self, tenant_id: str, user_id: str) -> set[str]:
+        """Union legacy/direct user roles with roles granted through Groups."""
+        query = """
+            SELECT DISTINCT r.name
+            FROM fnd_auth_roles AS r
+            LEFT JOIN fnd_auth_user_roles AS ur
+              ON ur.tenant_id = r.tenant_id AND ur.role_id = r.id
+             AND ur.user_id = ?
+            LEFT JOIN fnd_auth_group_roles AS gr
+              ON gr.tenant_id = r.tenant_id AND gr.role_id = r.id
+            LEFT JOIN fnd_auth_group_memberships AS gm
+              ON gm.tenant_id = gr.tenant_id AND gm.group_id = gr.group_id
+             AND gm.user_id = ?
+            WHERE r.tenant_id = ? AND (ur.user_id IS NOT NULL OR gm.user_id IS NOT NULL)
+        """
+        with self._db.connect() as conn:
+            rows = conn.fetchall(query, (user_id, user_id, tenant_id))
+        return {str(row["name"]) for row in rows}
 
     def update_role(self, role_id: str, *, name: str, label: Optional[str],
                     menu_id: Optional[str], enabled: bool = True,

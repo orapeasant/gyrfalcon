@@ -124,9 +124,9 @@ DELETE_MEMBERSHIP = "DELETE FROM fnd_auth_memberships WHERE user_id = ? AND org_
 MEMBERSHIP_COLUMNS = ("user_id", "org_id", "roles", "created_at")
 
 
-def insert_membership(d: "Dialect") -> str:
-    return d.insert_ignore("fnd_auth_memberships", MEMBERSHIP_COLUMNS,
-                           conflict="user_id, org_id")
+def insert_membership() -> str:
+    return insert_ignore("fnd_auth_memberships", MEMBERSHIP_COLUMNS,
+                         conflict="user_id, org_id")
 
 
 INSERT_API_KEY = """
@@ -163,25 +163,26 @@ LIST_API_KEYS = (
 
 # -- pages (global) --------------------------------------------------------
 
-PAGE_COLUMNS = ("id", "key", "route", "label", "icon", "enabled", "created_at")
+PAGE_COLUMNS = ("id", "key", "route", "app_key", "label", "icon", "enabled", "created_at")
 
 INSERT_PAGE = """
-    INSERT INTO fnd_nav_pages (id, key, route, label, icon, enabled, created_at)
-    VALUES (?,?,?,?,?,?,?)
+    INSERT INTO fnd_nav_pages (id, key, route, app_key, label, icon, enabled, created_at)
+    VALUES (?,?,?,?,?,?,?,?)
 """
 GET_PAGE = "SELECT * FROM fnd_nav_pages WHERE id = ?"
 GET_PAGE_BY_KEY = "SELECT * FROM fnd_nav_pages WHERE key = ?"
 LIST_PAGES = "SELECT * FROM fnd_nav_pages ORDER BY key"
+UPDATE_PAGE_APP = "UPDATE fnd_nav_pages SET app_key = ? WHERE key = ?"
 UPDATE_PAGE = (
     "UPDATE fnd_nav_pages SET route = ?, label = ?, icon = ?, enabled = ? WHERE id = ?"
 )
 DELETE_PAGE = "DELETE FROM fnd_nav_pages WHERE id = ?"
 
 
-def insert_page(d: "Dialect") -> str:
+def insert_page() -> str:
     """Seeding re-runs on every start, so a page that already exists is a
     no-op rather than a duplicate-key failure."""
-    return d.insert_ignore("fnd_nav_pages", PAGE_COLUMNS, conflict="key")
+    return insert_ignore("fnd_nav_pages", PAGE_COLUMNS, conflict="key")
 
 
 # -- functions -------------------------------------------------------------
@@ -189,12 +190,13 @@ def insert_page(d: "Dialect") -> str:
 FUNCTION_COLUMNS = (
     "id", "key", "name", "icon", "kind", "target", "params", "enabled",
     "active_from", "active_to", "created_at", "updated_at", "tenant_id",
+    "application_id",
 )
 
 
-def insert_function(d: "Dialect") -> str:
-    return d.insert_ignore("fnd_nav_functions", FUNCTION_COLUMNS,
-                           conflict="tenant_id, key")
+def insert_function() -> str:
+    return insert_ignore("fnd_nav_functions", FUNCTION_COLUMNS,
+                         conflict="tenant_id, key")
 
 
 def get_function(scope: "Scope") -> tuple[str, tuple]:
@@ -216,7 +218,8 @@ def update_function(scope: "Scope") -> tuple[str, tuple]:
     where, params = compose_where(scope.tenant_wide(), ["id = ?"])
     return (
         "UPDATE fnd_nav_functions SET name = ?, icon = ?, kind = ?, target = ?, "
-        f"params = ?, enabled = ?, active_from = ?, active_to = ?, updated_at = ? {where}",
+        f"params = ?, enabled = ?, active_from = ?, active_to = ?, updated_at = ?, "
+        f"application_id = ? {where}",
         params,
     )
 
@@ -229,11 +232,11 @@ def delete_function(scope: "Scope") -> tuple[str, tuple]:
 # -- menus -----------------------------------------------------------------
 
 MENU_COLUMNS = ("id", "name", "icon", "enabled", "active_from", "active_to",
-                "created_at", "updated_at", "tenant_id")
+                "created_at", "updated_at", "tenant_id", "application_id")
 
 
-def insert_menu(d: "Dialect") -> str:
-    return d.insert_ignore("fnd_nav_menus", MENU_COLUMNS, conflict="id")
+def insert_menu() -> str:
+    return insert_ignore("fnd_nav_menus", MENU_COLUMNS, conflict="id")
 
 
 def get_menu(scope: "Scope") -> tuple[str, tuple]:
@@ -250,7 +253,7 @@ def update_menu(scope: "Scope") -> tuple[str, tuple]:
     where, params = compose_where(scope.tenant_wide(), ["id = ?"])
     return (
         "UPDATE fnd_nav_menus SET name = ?, icon = ?, enabled = ?, "
-        f"active_from = ?, active_to = ?, updated_at = ? {where}",
+        f"active_from = ?, active_to = ?, updated_at = ?, application_id = ? {where}",
         params,
     )
 
@@ -265,12 +268,12 @@ def delete_menu(scope: "Scope") -> tuple[str, tuple]:
 MENU_ITEM_COLUMNS = (
     "id", "menu_id", "sort_order", "function_id", "ref_menu_id", "access",
     "label_override", "icon_override", "enabled", "active_from", "active_to",
-    "tenant_id",
+    "tenant_id", "application_id",
 )
 
 
-def insert_menu_item(d: "Dialect") -> str:
-    return d.insert_ignore("fnd_nav_menu_items", MENU_ITEM_COLUMNS, conflict="id")
+def insert_menu_item() -> str:
+    return insert_ignore("fnd_nav_menu_items", MENU_ITEM_COLUMNS, conflict="id")
 
 
 def get_menu_item(scope: "Scope") -> tuple[str, tuple]:
@@ -298,7 +301,7 @@ def update_menu_item(scope: "Scope") -> tuple[str, tuple]:
     return (
         "UPDATE fnd_nav_menu_items SET sort_order = ?, access = ?, "
         "label_override = ?, icon_override = ?, enabled = ?, "
-        f"active_from = ?, active_to = ? {where}",
+        f"active_from = ?, active_to = ?, application_id = ? {where}",
         params,
     )
 
@@ -324,8 +327,8 @@ ROLE_COLUMNS = ("id", "name", "label", "menu_id", "enabled", "active_from",
                 "active_to", "description", "created_at", "tenant_id")
 
 
-def insert_role(d: "Dialect") -> str:
-    return d.insert_ignore("fnd_auth_roles", ROLE_COLUMNS, conflict="tenant_id, name")
+def insert_role() -> str:
+    return insert_ignore("fnd_auth_roles", ROLE_COLUMNS, conflict="tenant_id, name")
 
 
 def get_role(scope: "Scope") -> tuple[str, tuple]:
@@ -375,8 +378,8 @@ BUMP_NAV_VERSION = (
 NAV_VERSION_COLUMNS = ("tenant_id", "version", "updated_at")
 
 
-def insert_nav_version(d: "Dialect") -> str:
-    return d.insert_ignore("fnd_nav_versions", NAV_VERSION_COLUMNS, conflict="tenant_id")
+def insert_nav_version() -> str:
+    return insert_ignore("fnd_nav_versions", NAV_VERSION_COLUMNS, conflict="tenant_id")
 
 
 # -- service accounts on auth_api_keys -------------------------------------

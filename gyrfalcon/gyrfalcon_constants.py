@@ -161,10 +161,6 @@ def get_mcp_file() -> Path:
     return get_mcp_dir() / "mcp.json"
 
 
-def get_applications_file() -> Path:
-    return get_gyrfalcon_home() / "applications.json"
-
-
 def get_agents_file() -> Path:
     return get_gyrfalcon_home() / "agents.json"
 

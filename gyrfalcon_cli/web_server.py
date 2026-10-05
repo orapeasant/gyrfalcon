@@ -23,7 +23,7 @@ from fastapi import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gyrfalcon.gyrfalcon_logging import get_logger
 from gyrfalcon.gyrfalcon_state import SessionDB
@@ -1754,39 +1754,18 @@ async def get_logs(request: Request, file: str = "agent.log", lines: int = 200, 
 
 # --- Applications ---
 
-import uuid as _uuid_mod
-
-
-def _load_applications() -> list[dict]:
-    from gyrfalcon.gyrfalcon_constants import get_applications_file
-    p = get_applications_file()
-    if not p.exists():
-        return []
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return data.get("applications", []) if isinstance(data, dict) else []
-    except (json.JSONDecodeError, OSError):
-        return []
-
-
-def _save_applications(apps: list[dict]) -> None:
-    from gyrfalcon.gyrfalcon_constants import get_applications_file
-    p = get_applications_file()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"applications": apps}, indent=2), encoding="utf-8")
-
-
 class ApplicationRequest(BaseModel):
+    code: Optional[str] = None
     name: str
     description: str = ""
     enabled: bool = True
     command: str = ""
-    args: list[str] = []
-    env: dict[str, str] = {}
-    tags: list[str] = []
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
     version: str = "1.0.0"
-    source_sessions: list[str] = []
-    config: dict = {}
+    source_sessions: list[str] = Field(default_factory=list)
+    config: dict = Field(default_factory=dict)
 
 
 class ToggleRequest(BaseModel):
@@ -1796,91 +1775,72 @@ class ToggleRequest(BaseModel):
 @app.get("/api/applications")
 async def list_applications(request: Request):
     _verify_token(request)
-    return {"applications": _load_applications()}
+    from gyrfalcon.applications.store import get_application_store
+
+    return {"applications": get_application_store().list()}
 
 
 @app.post("/api/applications")
 async def create_application(request: Request, body: ApplicationRequest):
     _verify_token(request)
-    apps = _load_applications()
-    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    entry = {
-        "id": str(_uuid_mod.uuid4()),
-        "name": body.name,
-        "description": body.description,
-        "enabled": body.enabled,
-        "command": body.command,
-        "args": body.args,
-        "env": body.env,
-        "tags": body.tags,
-        "version": body.version,
-        "source_sessions": body.source_sessions,
-        "config": body.config,
-        "created_at": now,
-        "updated_at": now,
-    }
-    apps.append(entry)
-    _save_applications(apps)
-    return entry
+    from gyrfalcon.applications.store import get_application_store
+
+    try:
+        return get_application_store().create(body.model_dump())
+    except Exception as exc:
+        raise HTTPException(409, "Application code already exists or application is invalid") from exc
 
 
 @app.get("/api/applications/{app_id}")
 async def get_application(request: Request, app_id: str):
     _verify_token(request)
-    for a in _load_applications():
-        if a["id"] == app_id:
-            return a
-    raise HTTPException(404, "Application not found")
+    from gyrfalcon.applications.store import get_application_store
+
+    row = get_application_store().get(app_id)
+    if row is None:
+        raise HTTPException(404, "Application not found")
+    return row
 
 
 @app.put("/api/applications/{app_id}")
 async def update_application(request: Request, app_id: str, body: ApplicationRequest):
     _verify_token(request)
-    apps = _load_applications()
-    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    for i, a in enumerate(apps):
-        if a["id"] == app_id:
-            apps[i] = {
-                **a,
-                "name": body.name,
-                "description": body.description,
-                "enabled": body.enabled,
-                "command": body.command,
-                "args": body.args,
-                "env": body.env,
-                "tags": body.tags,
-                "version": body.version,
-                "source_sessions": body.source_sessions,
-                "config": body.config,
-                "updated_at": now,
-            }
-            _save_applications(apps)
-            return apps[i]
-    raise HTTPException(404, "Application not found")
+    from gyrfalcon.applications.store import get_application_store
+
+    try:
+        row = get_application_store().update(app_id, body.model_dump())
+    except Exception as exc:
+        raise HTTPException(409, "Application code already exists or application is invalid") from exc
+    if row is None:
+        raise HTTPException(404, "Application not found")
+    return row
 
 
 @app.delete("/api/applications/{app_id}")
 async def delete_application(request: Request, app_id: str):
     _verify_token(request)
-    apps = _load_applications()
-    new_apps = [a for a in apps if a["id"] != app_id]
-    if len(new_apps) == len(apps):
+    from gyrfalcon.applications.store import get_application_store
+
+    try:
+        deleted = get_application_store().delete(app_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not deleted:
         raise HTTPException(404, "Application not found")
-    _save_applications(new_apps)
     return {"ok": True}
 
 
 @app.post("/api/applications/{app_id}/toggle")
 async def toggle_application(request: Request, app_id: str, body: ToggleRequest):
     _verify_token(request)
-    apps = _load_applications()
-    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    for i, a in enumerate(apps):
-        if a["id"] == app_id:
-            apps[i] = {**a, "enabled": body.enabled, "updated_at": now}
-            _save_applications(apps)
-            return apps[i]
-    raise HTTPException(404, "Application not found")
+    from gyrfalcon.applications.store import get_application_store
+
+    current = get_application_store().get(app_id)
+    if current is None:
+        raise HTTPException(404, "Application not found")
+    current["enabled"] = body.enabled
+    row = get_application_store().update(app_id, current)
+    return row
 
 
 # --- Security: Service Accounts (Administration > Security) ---
@@ -2499,6 +2459,14 @@ class GraphEnabled(BaseModel):
     enabled: bool
 
 
+class ActivitySourceUpdate(BaseModel):
+    content: str
+
+
+class ActivityFolderCreate(BaseModel):
+    path: str
+
+
 
 def _require_flow_designer(request: Request):
     principal = _verify_token(request)
@@ -2520,11 +2488,35 @@ async def list_graph_activities(request: Request):
 @app.get("/api/flow/graphs/activity-modules")
 async def list_graph_activity_modules(request: Request):
     _require_flow_designer(request)
-    from gyrfalcon.flow.registry import list_activity_modules
-    return {"modules": list_activity_modules()}
+    from gyrfalcon.flow.registry import list_activity_folders, list_activity_modules
+    return {"modules": list_activity_modules(), "folders": list_activity_folders()}
 
 
-@app.get("/api/flow/graphs/activity-modules/{name}")
+@app.post("/api/flow/graphs/activity-folders")
+async def create_graph_activity_folder(request: Request, body: ActivityFolderCreate):
+    _require_flow_designer(request)
+    from gyrfalcon.flow.registry import create_activity_folder, list_activity_folders
+    try:
+        create_activity_folder(body.path)
+        return {"folders": list_activity_folders()}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.delete("/api/flow/graphs/activity-folders/{name:path}")
+async def delete_graph_activity_folder(request: Request, name: str):
+    _require_flow_designer(request)
+    from gyrfalcon.flow.registry import (delete_activity_path, list_activities,
+                                         list_activity_folders, list_activity_modules)
+    try:
+        delete_activity_path(name, directory=True)
+        return {"folders": list_activity_folders(), "modules": list_activity_modules(),
+                "activities": list_activities()}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.get("/api/flow/graphs/activity-modules/{name:path}")
 async def get_graph_activity_module(request: Request, name: str):
     _require_flow_designer(request)
     from gyrfalcon.flow.registry import get_activity_module
@@ -2534,8 +2526,8 @@ async def get_graph_activity_module(request: Request, name: str):
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.put("/api/flow/graphs/activity-modules/{name}")
-async def save_graph_activity_module(request: Request, name: str, body: FlowSourceUpdate):
+@app.put("/api/flow/graphs/activity-modules/{name:path}")
+async def save_graph_activity_module(request: Request, name: str, body: ActivitySourceUpdate):
     _require_flow_designer(request)
     from gyrfalcon.flow.registry import list_activities, save_activity_module
     try:
@@ -2543,6 +2535,19 @@ async def save_graph_activity_module(request: Request, name: str, body: FlowSour
     except (ValueError, SyntaxError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"activities": list_activities()}
+
+
+@app.delete("/api/flow/graphs/activity-modules/{name:path}")
+async def delete_graph_activity_module(request: Request, name: str):
+    _require_flow_designer(request)
+    from gyrfalcon.flow.registry import (delete_activity_path, list_activities,
+                                         list_activity_folders, list_activity_modules)
+    try:
+        delete_activity_path(name)
+        return {"folders": list_activity_folders(), "modules": list_activity_modules(),
+                "activities": list_activities()}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.get("/api/flow/graphs")
@@ -3113,11 +3118,37 @@ async def get_visual_run(request: Request, run_id: str):
         if not principal.is_operator and run["user_id"] != principal.user_id:
             raise HTTPException(403, "Flow run is not visible to this user")
         version = store.get_version(run["definition_id"], run["version"])
-        return {**run, "graph": version["graph"] if version else None,
+        graph = _resolve_run_process_graph(version["graph"], store,
+                                           ancestry=(run["definition_id"],)) if version else None
+        return {**run, "graph": graph,
+                "flow_context": store.get_flow_context(run_id),
                 "nodes": store.list_node_visits(run_id),
                 "events": store.list_events(run_id)}
     finally:
         store.close()
+
+
+def _resolve_run_process_graph(graph: dict, store, *,
+                               ancestry: tuple[str, ...] = ()) -> dict:
+    """Attach pinned child graphs for Process navigation in run inspection."""
+    from copy import deepcopy
+
+    resolved = deepcopy(graph)
+    for node in resolved.get("nodes", []):
+        process = node.get("process") or {}
+        if process.get("mode") == "inline":
+            process["graph"] = _resolve_run_process_graph(process["graph"], store,
+                                                            ancestry=ancestry)
+        elif process.get("mode") == "reference":
+            definition_id = process.get("definitionId")
+            pinned_version = process.get("version")
+            if not definition_id or not isinstance(pinned_version, int) or definition_id in ancestry:
+                continue
+            child = store.get_version(definition_id, pinned_version)
+            if child is not None:
+                process["resolvedGraph"] = _resolve_run_process_graph(
+                    child["graph"], store, ancestry=(*ancestry, definition_id))
+    return resolved
 
 
 class FlowRunBulkDelete(BaseModel):
@@ -3332,7 +3363,7 @@ async def auth_status(request: Request):
         "oidc_configured": oidc_config().enabled,
         "login_required": local_enabled or identity.identity_enabled(),
         "authenticated": principal is not None,
-        "username": "admin" if principal and credential else None,
+        "username": credential["username"] if principal and credential else None,
         "must_change_password": bool(credential and credential["must_change"]),
     }
 
@@ -3491,9 +3522,270 @@ async def list_api_keys(request: Request):
 
 def _require_security_admin(request: Request):
     principal = _verify_token(request)
-    if not principal.has_role("admin"):
+    if not principal.has_role("admin", "system_admin"):
         raise HTTPException(403, "Administrator role required")
     return principal
+
+
+def _require_developer_or_admin(request: Request):
+    principal = _verify_token(request)
+    from gyrfalcon.nav.store import get_nav_store
+
+    roles = set(principal.roles)
+    roles.update(get_nav_store().role_names_for_user(
+        principal.tenant_id, principal.user_id,
+    ))
+    if not roles.intersection({"admin", "system_admin", "operator", "app_developer"}):
+        raise HTTPException(403, "Administrator or Developer role required")
+    return principal
+
+
+class NavigationFunctionBody(BaseModel):
+    key: str
+    name: str
+    kind: str
+    target: str
+    icon: Optional[str] = None
+    params: Optional[dict] = None
+    enabled: bool = True
+    application_id: Optional[str] = None
+
+
+class NavigationMenuBody(BaseModel):
+    name: str
+    icon: Optional[str] = None
+    enabled: bool = True
+    application_id: Optional[str] = None
+
+
+class NavigationMenuItemBody(BaseModel):
+    menu_id: str
+    function_id: Optional[str] = None
+    ref_menu_id: Optional[str] = None
+    sort_order: int = 0
+    access: str = "read"
+    label_override: Optional[str] = None
+    icon_override: Optional[str] = None
+    enabled: bool = True
+    application_id: Optional[str] = None
+
+
+def _navigation_function_payload(function):
+    return {
+        "id": function.id, "key": function.key, "name": function.name,
+        "kind": function.kind, "target": function.target,
+        "icon": function.icon, "params": function.params,
+        "enabled": function.enabled, "active_from": function.active_from,
+        "active_to": function.active_to, "application_id": function.application_id,
+    }
+
+
+def _navigation_menu_payload(menu, item_count=0):
+    return {"id": menu.id, "name": menu.name, "icon": menu.icon,
+            "enabled": menu.enabled, "item_count": item_count,
+            "application_id": menu.application_id}
+
+
+def _navigation_menu_item_payload(item):
+    return {
+        "id": item.id, "menu_id": item.menu_id,
+        "application_id": item.application_id,
+        "function_id": item.function_id, "ref_menu_id": item.ref_menu_id,
+        "sort_order": item.sort_order, "access": item.access,
+        "label_override": item.label_override,
+        "icon_override": item.icon_override, "enabled": item.enabled,
+    }
+
+
+@app.get("/api/security/navigation/catalog")
+async def get_navigation_catalog(request: Request):
+    _require_developer_or_admin(request)
+    from gyrfalcon.applications.store import get_application_store
+    from gyrfalcon.nav.store import get_nav_store
+
+    nav = get_nav_store()
+    menus = nav.list_menus()
+    items = [item for menu in menus for item in nav.list_items(menu.id)]
+    return {
+        "applications": [{"id": row["id"], "code": row["code"], "name": row["name"]}
+                         for row in get_application_store().list()],
+        "functions": [_navigation_function_payload(row) for row in nav.list_functions()],
+        "menus": [_navigation_menu_payload(
+            menu, sum(item.menu_id == menu.id for item in items),
+        ) for menu in menus],
+        "menu_items": [_navigation_menu_item_payload(item) for item in items],
+        "roles": [{"id": row.id, "name": row.name, "label": row.label,
+                   "menu_id": row.menu_id} for row in nav.list_roles()],
+    }
+
+
+@app.post("/api/security/navigation/functions")
+async def create_navigation_function(request: Request, body: NavigationFunctionBody):
+    _require_developer_or_admin(request)
+    from gyrfalcon.nav.models import FUNCTION_KINDS, KIND_PAGE
+    from gyrfalcon.nav.store import get_nav_store
+
+    nav = get_nav_store()
+    key, name, target = body.key.strip(), body.name.strip(), body.target.strip()
+    if not key or not name or not target:
+        raise HTTPException(400, "Function key, name, and target are required")
+    if body.kind not in FUNCTION_KINDS:
+        raise HTTPException(400, "Unsupported Function kind")
+    if body.kind == KIND_PAGE and nav.get_page_by_key(target) is None:
+        raise HTTPException(400, "Page Function target must be a registered page key")
+    try:
+        row = nav.create_function(key, name, body.kind, target, icon=body.icon,
+                                  params=body.params, enabled=body.enabled,
+                                  application_id=body.application_id)
+    except Exception as exc:
+        raise HTTPException(409, "Function key already exists or Function is invalid") from exc
+    return {"function": _navigation_function_payload(row)}
+
+
+@app.put("/api/security/navigation/functions/{function_id}")
+async def update_navigation_function(request: Request, function_id: str,
+                                     body: NavigationFunctionBody):
+    _require_developer_or_admin(request)
+    from gyrfalcon.nav.models import FUNCTION_KINDS, KIND_PAGE
+    from gyrfalcon.nav.store import get_nav_store
+
+    nav = get_nav_store()
+    if body.kind not in FUNCTION_KINDS:
+        raise HTTPException(400, "Unsupported Function kind")
+    if not body.name.strip() or not body.target.strip():
+        raise HTTPException(400, "Function name and target are required")
+    if body.kind == KIND_PAGE and nav.get_page_by_key(body.target.strip()) is None:
+        raise HTTPException(400, "Page Function target must be a registered page key")
+    row = nav.update_function(function_id, name=body.name.strip(), kind=body.kind,
+                              target=body.target.strip(), icon=body.icon,
+                              params=body.params, enabled=body.enabled,
+                              application_id=body.application_id)
+    if row is None:
+        raise HTTPException(404, "Function not found")
+    return {"function": _navigation_function_payload(row)}
+
+
+@app.delete("/api/security/navigation/functions/{function_id}")
+async def delete_navigation_function(request: Request, function_id: str):
+    principal = _require_developer_or_admin(request)
+    from gyrfalcon.nav.store import get_nav_store
+
+    nav = get_nav_store()
+    if nav.get_function(function_id) is None:
+        raise HTTPException(404, "Function not found")
+    with nav._db.connect() as conn:
+        used = conn.fetchone(
+            "SELECT 1 FROM fnd_nav_menu_items WHERE tenant_id = ? AND function_id = ? LIMIT 1",
+            (principal.tenant_id, function_id),
+        )
+    if used:
+        raise HTTPException(409, "Remove this Function from its menu items before deleting it")
+    nav.delete_function(function_id)
+    return {"status": "deleted"}
+
+
+@app.post("/api/security/navigation/menus")
+async def create_navigation_menu(request: Request, body: NavigationMenuBody):
+    _require_developer_or_admin(request)
+    from gyrfalcon.nav.store import get_nav_store
+
+    if not body.name.strip():
+        raise HTTPException(400, "Menu name is required")
+    try:
+        row = get_nav_store().create_menu(body.name.strip(), icon=body.icon,
+                                          enabled=body.enabled,
+                                          application_id=body.application_id)
+    except Exception as exc:
+        raise HTTPException(409, "Menu could not be created") from exc
+    return {"menu": _navigation_menu_payload(row)}
+
+
+@app.put("/api/security/navigation/menus/{menu_id}")
+async def update_navigation_menu(request: Request, menu_id: str,
+                                 body: NavigationMenuBody):
+    _require_developer_or_admin(request)
+    from gyrfalcon.nav.store import get_nav_store
+
+    if not body.name.strip():
+        raise HTTPException(400, "Menu name is required")
+    row = get_nav_store().update_menu(menu_id, name=body.name.strip(),
+                                      icon=body.icon, enabled=body.enabled,
+                                      application_id=body.application_id)
+    if row is None:
+        raise HTTPException(404, "Menu not found")
+    return {"menu": _navigation_menu_payload(row)}
+
+
+@app.delete("/api/security/navigation/menus/{menu_id}")
+async def delete_navigation_menu(request: Request, menu_id: str):
+    _require_developer_or_admin(request)
+    from gyrfalcon.nav.store import get_nav_store
+
+    nav = get_nav_store()
+    if nav.get_menu(menu_id) is None:
+        raise HTTPException(404, "Menu not found")
+    if any(role.menu_id == menu_id for role in nav.list_roles()):
+        raise HTTPException(409, "This Menu is assigned to a role")
+    if nav.items_referencing(menu_id):
+        raise HTTPException(409, "Remove this Menu from its parent menu before deleting it")
+    nav.delete_menu(menu_id)
+    return {"status": "deleted"}
+
+
+@app.post("/api/security/navigation/menu-items")
+async def create_navigation_menu_item(request: Request, body: NavigationMenuItemBody):
+    _require_developer_or_admin(request)
+    from gyrfalcon.nav.models import ACCESS_LEVELS
+    from gyrfalcon.nav.store import get_nav_store
+
+    nav = get_nav_store()
+    if body.access not in ACCESS_LEVELS:
+        raise HTTPException(400, "Access must be read or write")
+    if nav.get_menu(body.menu_id) is None:
+        raise HTTPException(404, "Parent Menu not found")
+    if body.function_id and nav.get_function(body.function_id) is None:
+        raise HTTPException(404, "Function not found")
+    if body.ref_menu_id and nav.get_menu(body.ref_menu_id) is None:
+        raise HTTPException(404, "Child Menu not found")
+    try:
+        row = nav.add_item(
+            body.menu_id, function_id=body.function_id, ref_menu_id=body.ref_menu_id,
+            access=body.access, sort_order=body.sort_order,
+            label_override=body.label_override, icon_override=body.icon_override,
+            enabled=body.enabled, application_id=body.application_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"menu_item": _navigation_menu_item_payload(row)}
+
+
+@app.put("/api/security/navigation/menu-items/{item_id}")
+async def update_navigation_menu_item(request: Request, item_id: str,
+                                      body: NavigationMenuItemBody):
+    _require_developer_or_admin(request)
+    from gyrfalcon.nav.models import ACCESS_LEVELS
+    from gyrfalcon.nav.store import get_nav_store
+
+    if body.access not in ACCESS_LEVELS:
+        raise HTTPException(400, "Access must be read or write")
+    nav = get_nav_store()
+    row = nav.update_item(item_id, sort_order=body.sort_order, access=body.access,
+                          label_override=body.label_override,
+                          icon_override=body.icon_override, enabled=body.enabled,
+                          application_id=body.application_id)
+    if row is None:
+        raise HTTPException(404, "Menu item not found")
+    return {"menu_item": _navigation_menu_item_payload(row)}
+
+
+@app.delete("/api/security/navigation/menu-items/{item_id}")
+async def delete_navigation_menu_item(request: Request, item_id: str):
+    _require_developer_or_admin(request)
+    from gyrfalcon.nav.store import get_nav_store
+
+    if not get_nav_store().delete_item(item_id):
+        raise HTTPException(404, "Menu item not found")
+    return {"status": "deleted"}
 
 
 class SecurityUserCreate(BaseModel):
@@ -3588,8 +3880,11 @@ async def update_security_user(request: Request, user_id: str, body: SecurityUse
     before = next((u for u in auth.list_tenant_users(principal.tenant_id) if u["id"] == user_id), None)
     if before is None:
         raise HTTPException(404, "User not found")
-    if "admin" in before["roles"] and ("admin" not in body.roles or body.disabled):
-        admins = [u for u in auth.list_tenant_users(principal.tenant_id) if "admin" in u["roles"] and not u["disabled"]]
+    is_admin = bool(set(before["roles"]) & {"admin", "system_admin"})
+    stays_admin = bool(set(body.roles) & {"admin", "system_admin"})
+    if is_admin and (not stays_admin or body.disabled):
+        admins = [u for u in auth.list_tenant_users(principal.tenant_id)
+                  if set(u["roles"]) & {"admin", "system_admin"} and not u["disabled"]]
         if len(admins) <= 1:
             raise HTTPException(400, "The last active administrator cannot be disabled or demoted")
     if not auth.update_tenant_user(
@@ -3733,20 +4028,109 @@ async def revoke_api_key(request: Request, key_id: str):
 
 # --- SPA Serving ---
 
-def _get_spa_dir() -> Path:
-    logger.debug("Beginning of _get_spa_dir")
-    return Path(__file__).parent.parent / "web" / "dist"
+@app.get("/api/navigation")
+async def get_navigation(request: Request):
+    """Resolve the caller's menu trees, page routes, and grants from DB rows."""
+    principal = _verify_token(request)
+    from gyrfalcon.nav.models import is_live
+    from gyrfalcon.nav.seed import ensure_pages, ensure_seeded
+    from gyrfalcon.nav.store import get_nav_store
+
+    nav = get_nav_store()
+    ensure_pages(nav)
+    if not nav.list_roles():
+        ensure_seeded(nav)
+
+    role_names = set(principal.roles)
+    role_names.update(nav.role_names_for_user(principal.tenant_id, principal.user_id))
+    roots_by_id: dict[str, dict] = {}
+    grants: dict[str, dict] = {}
+    for role_name in sorted(role_names):
+        role = nav.get_role_by_name(role_name)
+        if role is None or not is_live(role) or not role.menu_id:
+            continue
+        menu = nav.get_menu(role.menu_id)
+        if menu is None or not is_live(menu):
+            continue
+        tree, role_grants = nav.resolve_role(role_name)
+        roots_by_id.setdefault(menu.id, {
+            "menu_id": menu.id, "label": menu.name, "icon": menu.icon,
+            "items": [node.to_json() for node in tree],
+        })
+        for key, grant in role_grants.items():
+            existing = grants.get(key)
+            if existing is None or (existing["access"] == "read" and grant.access == "write"):
+                grants[key] = {"kind": grant.kind, "target": grant.target,
+                               "access": grant.access}
+
+    pages = [page for page in nav.list_pages() if page.enabled]
+    return {
+        "roots": list(roots_by_id.values()),
+        "pages": [{"key": page.key, "route": page.route,
+                   "app_key": page.app_key, "label": page.label,
+                   "enabled": page.enabled} for page in pages],
+        "grants": grants,
+    }
+
+@app.get("/api/navigation/pages")
+async def get_navigation_pages(request: Request, app_key: Optional[str] = None):
+    """Return the DB route catalog; frontend manifests supply components."""
+    _verify_token(request)
+    if app_key is not None and app_key not in {"aie", "wf", "fnd"}:
+        raise HTTPException(400, "Unknown frontend app key")
+    from gyrfalcon.nav.seed import ensure_pages
+    from gyrfalcon.nav.store import get_nav_store
+
+    nav = get_nav_store()
+    ensure_pages(nav)
+    pages = [page for page in nav.list_pages()
+             if page.enabled and (app_key is None or page.app_key == app_key)]
+    return {"pages": [{"key": page.key, "route": page.route,
+                       "app_key": page.app_key, "label": page.label,
+                       "enabled": page.enabled} for page in pages]}
+
+def _get_spa_dir(app_key: Optional[str] = None) -> Path:
+    dist = Path(__file__).parent.parent / "web" / "dist"
+    if app_key in {"aie", "wf", "fnd"}:
+        module_dist = dist / app_key
+        if (module_dist / "index.html").is_file():
+            return module_dist
+    return dist
 
 
-@app.get("/")
-async def serve_spa_root():
-    spa_dir = _get_spa_dir()
+def _spa_app_for_route(path: str) -> str:
+    aliases = {
+        "": "aie", "tokenomics": "aie", "flows": "wf",
+        "security": "fnd", "applications": "fnd",
+    }
+    normalized = path.strip("/")
+    first = normalized.split("/", 1)[0] if normalized else ""
+    if first in aliases:
+        return aliases[first]
+    try:
+        from gyrfalcon.nav.store import get_nav_store
+        requested = normalized.split("/") if normalized else []
+        for page in get_nav_store().list_pages():
+            template = page.route.strip("/").split("/") if page.route.strip("/") else []
+            if len(template) == len(requested) and all(
+                expected.startswith(":") or expected == actual
+                for expected, actual in zip(template, requested)
+            ):
+                return page.app_key if page.app_key in {"aie", "wf", "fnd"} else "fnd"
+    except Exception:
+        logger.debug("Could not resolve SPA app from database route", exc_info=True)
+    return "fnd"
+
+
+def _spa_index_response(spa_dir: Path) -> HTMLResponse:
     index = spa_dir / "index.html"
     if not index.exists():
-        return HTMLResponse("<h1>Dashboard not built</h1><p>Run: cd web && npm run build</p>")
+        return HTMLResponse(
+            "<h1>Dashboard not built</h1><p>Run: cd web && npm run build:apps</p>",
+            status_code=503,
+        )
     html = index.read_text()
-    html = html.replace("<title>AI Foundry Dashboard</title>", f"<title>{get_app_name()} Dashboard</title>")
-    # Inject session token
+    html = html.replace("<title>Gyrfalcon Dashboard</title>", f"<title>{get_app_name()} Dashboard</title>")
     html = html.replace(
         "</head>",
         f'<script>window.__GYRFALCON_SESSION_TOKEN__="{_session_token}";'
@@ -3754,12 +4138,16 @@ async def serve_spa_root():
         f'window.__GYRFALCON_APP_NAME__={json.dumps(get_app_name())};'
         f'window.__GYRFALCON_ORG_NAME__={json.dumps(get_org_name())};</script></head>'
     )
-    # Prevent caching to ensure fresh token on server restart
     return HTMLResponse(html, headers={
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Pragma": "no-cache",
         "Expires": "0",
     })
+
+
+@app.get("/")
+async def serve_spa_root():
+    return _spa_index_response(_get_spa_dir("aie"))
 
 
 # Catch-all: serve SPA index.html for any non-API route (client-side routing)
@@ -3768,31 +4156,27 @@ async def serve_spa_fallback(path: str):
     # Don't intercept API routes
     if path.startswith("api/"):
         raise HTTPException(404, "Not found")
-    spa_dir = _get_spa_dir()
+    if path.startswith("_apps/"):
+        parts = Path(path).parts
+        if len(parts) >= 3 and parts[1] in {"aie", "wf", "fnd"}:
+            app_dir = _get_spa_dir(parts[1]).resolve()
+            asset_file = (app_dir.joinpath(*parts[2:])).resolve()
+            try:
+                asset_file.relative_to(app_dir)
+            except ValueError:
+                raise HTTPException(404, "Not found")
+            if asset_file.is_file():
+                from fastapi.responses import FileResponse
+                return FileResponse(str(asset_file))
+        raise HTTPException(404, "Not found")
+    spa_dir = _get_spa_dir(_spa_app_for_route(path))
     # Serve static assets directly
     asset_file = spa_dir / path
     if asset_file.exists() and asset_file.is_file():
         from fastapi.responses import FileResponse
         return FileResponse(str(asset_file))
     # Otherwise serve index.html for SPA routing
-    index = spa_dir / "index.html"
-    if not index.exists():
-        return HTMLResponse("<h1>Dashboard not built</h1><p>Run: cd web && npm run build</p>")
-    html = index.read_text()
-    html = html.replace("<title>AI Foundry Dashboard</title>", f"<title>{get_app_name()} Dashboard</title>")
-    html = html.replace(
-        "</head>",
-        f'<script>window.__GYRFALCON_SESSION_TOKEN__="{_session_token}";'
-        f'window.__GYRFALCON_BASE_PATH__="";'
-        f'window.__GYRFALCON_APP_NAME__={json.dumps(get_app_name())};'
-        f'window.__GYRFALCON_ORG_NAME__={json.dumps(get_org_name())};</script></head>'
-    )
-    # Prevent caching to ensure fresh token on server restart
-    return HTMLResponse(html, headers={
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0",
-    })
+    return _spa_index_response(spa_dir)
 
 
 def run_dashboard():

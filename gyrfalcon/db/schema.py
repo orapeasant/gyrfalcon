@@ -215,6 +215,22 @@ FLOW_RT_STATUSES = Table(
     ),
 )
 
+FLOW_RT_CONTEXTS = Table(
+    name="fnd_flow_rt_contexts",
+    columns=(
+        Column("tenant_id", "TEXT", "NOT NULL"),
+        Column("environment_id", "TEXT", "NOT NULL DEFAULT 'default'"),
+        Column("run_id", "TEXT", "NOT NULL"),
+        Column("flow_context", "JSONB", "NOT NULL DEFAULT '{}'::jsonb"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("updated_at", "REAL", "NOT NULL"),
+    ),
+    table_constraints=(
+        "PRIMARY KEY (tenant_id, environment_id, run_id)",
+        "FOREIGN KEY (tenant_id, environment_id, run_id) REFERENCES fnd_flow_rt_statuses(tenant_id, environment_id, id)",
+    ),
+)
+
 FLOW_RT_NODE_STATUSES = Table(
     name="fnd_flow_rt_node_statuses",
     columns=(
@@ -320,7 +336,7 @@ FLOW_RT_NOTIF = Table(
 
 FLOW_DT_TABLES = (FLOW_DT_DEFINITIONS, FLOW_DT_DEFINITION_VERSIONS, FLOW_DT_ATTRS,
                   FLOW_DT_NOTIF, FLOW_DT_DEPLOYMENTS)
-FLOW_RT_TABLES = (FLOW_RT_STATUSES, FLOW_RT_NODE_STATUSES, FLOW_RT_EVENTS,
+FLOW_RT_TABLES = (FLOW_RT_STATUSES, FLOW_RT_CONTEXTS, FLOW_RT_NODE_STATUSES, FLOW_RT_EVENTS,
                   FLOW_RT_ATTRS, FLOW_RT_NOTIF)
 
 
@@ -481,6 +497,49 @@ AUTH_GROUP_MEMBERSHIPS = Table(
     indexes=(Index("idx_auth_group_memberships_user", "fnd_auth_group_memberships", "tenant_id, user_id"),),
 )
 
+AUTH_USER_ROLES = Table(
+    name="fnd_auth_user_roles",
+    columns=(Column("tenant_id", "TEXT", "NOT NULL"),
+             Column("user_id", "TEXT", "NOT NULL"),
+             Column("role_id", "TEXT", "NOT NULL"),
+             Column("created_at", "REAL", "NOT NULL")),
+    table_constraints=(
+        "PRIMARY KEY (tenant_id, user_id, role_id)",
+        "FOREIGN KEY (user_id) REFERENCES fnd_auth_users(id)",
+        "FOREIGN KEY (tenant_id, role_id) REFERENCES fnd_auth_roles(tenant_id, id)",
+    ),
+    indexes=(Index("idx_auth_user_roles_role", "fnd_auth_user_roles", "tenant_id, role_id"),),
+)
+
+AUTH_GROUP_ROLES = Table(
+    name="fnd_auth_group_roles",
+    columns=(Column("tenant_id", "TEXT", "NOT NULL"),
+             Column("group_id", "TEXT", "NOT NULL"),
+             Column("role_id", "TEXT", "NOT NULL"),
+             Column("created_at", "REAL", "NOT NULL")),
+    table_constraints=(
+        "PRIMARY KEY (tenant_id, group_id, role_id)",
+        "FOREIGN KEY (tenant_id, group_id) REFERENCES fnd_auth_groups(tenant_id, id)",
+        "FOREIGN KEY (tenant_id, role_id) REFERENCES fnd_auth_roles(tenant_id, id)",
+    ),
+    indexes=(Index("idx_auth_group_roles_role", "fnd_auth_group_roles", "tenant_id, role_id"),),
+)
+
+AUTH_GROUP_PROVIDER_MAPPINGS = Table(
+    name="fnd_auth_group_provider_mappings",
+    columns=(Column("tenant_id", "TEXT", "NOT NULL"),
+             Column("provider", "TEXT", "NOT NULL"),
+             Column("provider_group_id", "TEXT", "NOT NULL"),
+             Column("group_id", "TEXT", "NOT NULL"),
+             Column("created_at", "REAL", "NOT NULL")),
+    table_constraints=(
+        "PRIMARY KEY (tenant_id, provider, provider_group_id)",
+        "FOREIGN KEY (tenant_id, group_id) REFERENCES fnd_auth_groups(tenant_id, id)",
+    ),
+    indexes=(Index("idx_auth_group_provider_app_group", "fnd_auth_group_provider_mappings",
+                   "tenant_id, group_id"),),
+)
+
 AUTH_TABLES = (AUTH_ORGS, AUTH_USERS, AUTH_MEMBERSHIPS, AUTH_API_KEYS)
 
 
@@ -494,6 +553,27 @@ AUTH_TABLES = (AUTH_ORGS, AUTH_USERS, AUTH_MEMBERSHIPS, AUTH_API_KEYS)
 # exception and is global: a route either shipped in this build or it did not.
 # --------------------------------------------------------------------------
 
+APPLICATIONS = Table(
+    name="fnd_applications",
+    columns=(
+        Column("id", "TEXT", "PRIMARY KEY"),
+        Column("code", "TEXT", "NOT NULL UNIQUE"),
+        Column("name", "TEXT", "NOT NULL"),
+        Column("description", "TEXT", "NOT NULL DEFAULT ''"),
+        SAColumn("enabled", Boolean, nullable=False, server_default=text("true")),
+        Column("command", "TEXT", "NOT NULL DEFAULT ''"),
+        Column("args", "JSONB", "NOT NULL DEFAULT '[]'::jsonb"),
+        Column("env", "JSONB", "NOT NULL DEFAULT '{}'::jsonb"),
+        Column("tags", "JSONB", "NOT NULL DEFAULT '[]'::jsonb"),
+        Column("version", "TEXT", "NOT NULL DEFAULT '1.0.0'"),
+        Column("source_sessions", "JSONB", "NOT NULL DEFAULT '[]'::jsonb"),
+        Column("config", "JSONB", "NOT NULL DEFAULT '{}'::jsonb"),
+        Column("created_at", "REAL", "NOT NULL"),
+        Column("updated_at", "REAL", "NOT NULL"),
+    ),
+    indexes=(Index("idx_fnd_applications_enabled", "fnd_applications", "enabled, name"),),
+)
+
 #: One navigable route that exists in this build. Global, not per-tenant — a
 #: tenant does not invent routes, it only grants or withholds them via a Menu.
 #: Keeping this separate from `nav_functions` is what makes a page Function's
@@ -505,11 +585,24 @@ NAV_PAGES = Table(
         Column("id", "TEXT", "PRIMARY KEY"),
         Column("key", "TEXT", "NOT NULL UNIQUE"),    # "flow.instances"
         Column("route", "TEXT", "NOT NULL"),          # "/flows/instances"
+        Column("app_key", "TEXT", "NOT NULL DEFAULT 'fnd'"),
         Column("label", "TEXT", "NOT NULL"),
         Column("icon", "TEXT"),                        # lucide-react component name
         Column("enabled", "BOOL", "NOT NULL DEFAULT 1"),
         Column("created_at", "REAL", "NOT NULL"),
     ),
+    indexes=(Index("idx_nav_pages_app", "fnd_nav_pages", "app_key"),),
+)
+
+NAV_PAGE_ALIASES = Table(
+    name="fnd_nav_page_aliases",
+    columns=(
+        Column("route", "TEXT", "PRIMARY KEY"),
+        Column("page_key", "TEXT", "NOT NULL"),
+        Column("created_at", "REAL", "NOT NULL"),
+    ),
+    table_constraints=("FOREIGN KEY (page_key) REFERENCES fnd_nav_pages(key)",),
+    indexes=(Index("idx_nav_page_aliases_page", "fnd_nav_page_aliases", "page_key"),),
 )
 
 #: A thing a menu entry points at, and the unit of authorization for the
@@ -532,8 +625,10 @@ NAV_FUNCTIONS = Table(
         Column("created_at", "REAL", "NOT NULL"),
         Column("updated_at", "REAL", "NOT NULL"),
         Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+        Column("application_id", "TEXT", "NOT NULL"),
     ),
-    table_constraints=("UNIQUE (tenant_id, key)",),
+    table_constraints=("UNIQUE (tenant_id, key)",
+                       "FOREIGN KEY (application_id) REFERENCES fnd_applications(id)"),
     indexes=(Index("idx_functions_tenant", "fnd_nav_functions", "tenant_id"),),
 )
 
@@ -549,7 +644,9 @@ NAV_MENUS = Table(
         Column("created_at", "REAL", "NOT NULL"),
         Column("updated_at", "REAL", "NOT NULL"),
         Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+        Column("application_id", "TEXT", "NOT NULL"),
     ),
+    table_constraints=("FOREIGN KEY (application_id) REFERENCES fnd_applications(id)",),
     indexes=(Index("idx_nav_menus_tenant", "fnd_nav_menus", "tenant_id"),),
 )
 
@@ -570,7 +667,9 @@ NAV_MENU_ITEMS = Table(
         Column("active_from", "REAL"),
         Column("active_to", "REAL"),
         Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
+        Column("application_id", "TEXT", "NOT NULL"),
     ),
+    table_constraints=("FOREIGN KEY (application_id) REFERENCES fnd_applications(id)",),
     indexes=(
         Index("idx_menu_items_menu", "fnd_nav_menu_items", "menu_id"),
         Index("idx_menu_items_function", "fnd_nav_menu_items", "function_id"),
@@ -595,7 +694,7 @@ AUTH_ROLES = Table(
         Column("created_at", "REAL", "NOT NULL"),
         Column("tenant_id", "TEXT", "NOT NULL DEFAULT 'local'"),
     ),
-    table_constraints=("UNIQUE (tenant_id, name)",),
+    table_constraints=("UNIQUE (tenant_id, id)", "UNIQUE (tenant_id, name)"),
     indexes=(Index("idx_roles_tenant", "fnd_auth_roles", "tenant_id"),),
 )
 
@@ -612,7 +711,7 @@ NAV_VERSIONS = Table(
     ),
 )
 
-NAV_TABLES = (NAV_PAGES, NAV_FUNCTIONS, NAV_MENUS, NAV_MENU_ITEMS,
+NAV_TABLES = (APPLICATIONS, NAV_PAGES, NAV_PAGE_ALIASES, NAV_FUNCTIONS, NAV_MENUS, NAV_MENU_ITEMS,
               AUTH_ROLES, NAV_VERSIONS)
 
 
@@ -916,7 +1015,8 @@ MAIL_TABLES = (
 )
 
 ALL_TABLES = (FLOW_DT_TABLES + FLOW_RT_TABLES + AUTH_TABLES
-              + (AUTH_LOCAL_CREDENTIALS, AUTH_GROUPS, AUTH_GROUP_MEMBERSHIPS) + NAV_TABLES
+              + (AUTH_LOCAL_CREDENTIALS, AUTH_GROUPS, AUTH_GROUP_MEMBERSHIPS,
+                 AUTH_USER_ROLES, AUTH_GROUP_ROLES, AUTH_GROUP_PROVIDER_MAPPINGS) + NAV_TABLES
               + (AUTH_MEMBERSHIP_ATTRIBUTES,) + SESSION_TABLES + MAIL_TABLES)
 
 # Agent and Notification messages carry reciprocal, tenant-scoped links to

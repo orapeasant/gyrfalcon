@@ -80,7 +80,7 @@ class AuthStore:
             with self._db.connect() as conn:
                 conn.execute(sql.INSERT_USER, (user_id, "local-password", "admin", "", "Administrator", now, None))
             user = self.get_user(user_id)
-        self.add_member(user["id"], "local", roles=("admin", "operator"))
+        self.add_member(user["id"], "local", roles=("admin", "operator", "system_admin"))
         try:
             with self._db.connect() as conn:
                 conn.execute(sql.INSERT_LOCAL_CREDENTIAL,

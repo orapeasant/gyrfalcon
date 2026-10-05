@@ -24,6 +24,9 @@ class RuntimePort(Protocol):
     def list_node_visits(self, run_id: str) -> list[dict]: ...
     def get_attrs(self, run_id: str, scope_path: str) -> dict[str, Any]: ...
     def put_attrs(self, run_id: str, scope_path: str, values: dict[str, Any]) -> None: ...
+    def get_flow_context(self, run_id: str) -> dict | None: ...
+    def save_flow_context(self, run_id: str, flow_context: dict, *,
+                          only_if_absent: bool = False) -> dict: ...
 
 
 Dispatcher = Callable[[dict, ActivityContext, str], ActivityResult | WaitResult]
@@ -90,11 +93,23 @@ class VisualExecutor:
         if row.get("state") == "completed":
             return ExecutionOutcome("completed", run_id, row.get("result"))
         context = row.get("context") or {}
+        context_inputs = inputs if inputs is not None else row.get("parameters") or {}
+        if not context.get("frames") and not isinstance(context_inputs, dict):
+            raise ValueError("Flow inputs must be an object")
+        flow_context = self._load_flow_context()
+        if flow_context is None:
+            from gyrfalcon.flow.flow_context import initialize_flow_context
+            from gyrfalcon.identity import require_principal
+            if hasattr(self.store, "save_flow_context"):
+                context_run = {**row, "parameters": context_inputs}
+                flow_context = initialize_flow_context(self.store, context_run,
+                                                       require_principal())
+            else:  # Lightweight in-memory RuntimePorts used by embedded callers.
+                flow_context = {"inputs": deepcopy(context_inputs),
+                                "initiator": {}, "business": {}}
         if not context.get("frames"):
             if inputs is None:
-                inputs = row.get("parameters") or {}
-            if not isinstance(inputs, dict):
-                raise ValueError("Flow inputs must be an object")
+                inputs = context_inputs
             start = next(node for node in self.graph["nodes"] if node["type"] == "start")
             context = {"inputs": inputs, "outputs": {}, "frames": [
                 {"graph_path": "flow", "current": start["id"], "incoming": inputs,
@@ -182,6 +197,9 @@ class VisualExecutor:
             graph = self._graph_at(frame["graph_path"])
             node = self._nodes(graph)[frame["current"]]
             node_path = self._node_path(frame, node)
+            flow_context = self._load_flow_context() or {
+                "inputs": deepcopy(context.get("inputs") or {}),
+                "initiator": {}, "business": {}}
             self._initialize_attrs(run_id, node_path, node, {})
             retry_checkpoint = context.get("_retry_checkpoint")
             if retry_checkpoint and retry_checkpoint.get("node_path") == node_path:
@@ -194,15 +212,18 @@ class VisualExecutor:
                     outputs=deepcopy(saved.get("outputs") or {}),
                     flow_attributes=deepcopy(saved.get("flow_attributes") or {}),
                     attributes=deepcopy(saved.get("attributes") or {}),
+                    flow_context=deepcopy(saved.get("flow_context") or flow_context),
                 )
             else:
-                activity_context = self._activity_context(run_id, context, frame, node)
+                activity_context = self._activity_context(run_id, context, frame, node,
+                                                          flow_context=flow_context)
             context_snapshot = {
                 "incoming_value": deepcopy(activity_context.incoming_value),
                 "inputs": deepcopy(activity_context.inputs),
                 "outputs": deepcopy(activity_context.outputs),
                 "flow_attributes": deepcopy(activity_context.flow_attributes),
                 "attributes": deepcopy(activity_context.attributes),
+                "flow_context": deepcopy(activity_context.flow_context),
                 "run_context": deepcopy(context),
                 "loop_state": deepcopy(loop_state),
             }
@@ -227,6 +248,7 @@ class VisualExecutor:
                     continue
                 result = self._execute_node(run_id, context, frame, node, visit_id,
                                             activity_context=activity_context)
+                flow_context = self._save_flow_context(activity_context.flow_context)
                 if isinstance(result, WaitResult):
                     context["waiting_visit_id"] = visit_id
                     self.store.update_node_visit(visit_id, state="waiting",
@@ -307,7 +329,8 @@ class VisualExecutor:
         return ActivityResult(node["transients"][0], value)
 
     def _activity_context(self, run_id: str, context: dict, frame: dict,
-                          node: dict, human_response: Any = None) -> ActivityContext:
+                          node: dict, human_response: Any = None,
+                          flow_context: dict[str, Any] | None = None) -> ActivityContext:
         path = self._node_path(frame, node)
         graph = self._graph_at(frame["graph_path"])
         all_flow_attrs = self.store.get_attrs(run_id, frame["graph_path"])
@@ -325,8 +348,18 @@ class VisualExecutor:
             inputs=context["inputs"], outputs=outputs,
             flow_attributes=flow_attrs,
             attributes=self.store.get_attrs(run_id, path),
+            flow_context=deepcopy(flow_context if flow_context is not None
+                                  else self._load_flow_context() or {}),
             human_response=human_response,
         )
+
+    def _load_flow_context(self) -> dict[str, Any] | None:
+        loader = getattr(self.store, "get_flow_context", None)
+        return loader(self.run_id) if loader else None
+
+    def _save_flow_context(self, value: dict[str, Any]) -> dict[str, Any]:
+        saver = getattr(self.store, "save_flow_context", None)
+        return saver(self.run_id, value) if saver else deepcopy(value)
 
     def _python_parameters(self, fn: Callable, node: dict, ctx: ActivityContext) -> dict:
         declared = node.get("inputs") or {}

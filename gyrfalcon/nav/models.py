@@ -110,6 +110,7 @@ class Page:
     id: str
     key: str
     route: str
+    app_key: str
     label: str
     icon: Optional[str]
     enabled: bool
@@ -118,6 +119,7 @@ class Page:
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "Page":
         return cls(id=row["id"], key=row["key"], route=row["route"],
+                   app_key=row["app_key"] if "app_key" in row.keys() else "fnd",
                    label=row["label"], icon=row["icon"],
                    enabled=bool(row["enabled"]), created_at=row["created_at"])
 
@@ -137,6 +139,7 @@ class Function:
     active_from: Optional[float]
     active_to: Optional[float]
     tenant_id: str
+    application_id: str = ""
 
     @property
     def is_invocable(self) -> bool:
@@ -148,7 +151,7 @@ class Function:
                    icon=row["icon"], kind=row["kind"], target=row["target"],
                    params=_loads(row["params"]), enabled=bool(row["enabled"]),
                    active_from=row["active_from"], active_to=row["active_to"],
-                   tenant_id=row["tenant_id"])
+                   tenant_id=row["tenant_id"], application_id=row["application_id"])
 
 
 @dataclass(frozen=True)
@@ -160,12 +163,14 @@ class Menu:
     active_from: Optional[float]
     active_to: Optional[float]
     tenant_id: str
+    application_id: str = ""
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "Menu":
         return cls(id=row["id"], name=row["name"], icon=row["icon"],
                    enabled=bool(row["enabled"]), active_from=row["active_from"],
-                   active_to=row["active_to"], tenant_id=row["tenant_id"])
+                   active_to=row["active_to"], tenant_id=row["tenant_id"],
+                   application_id=row["application_id"])
 
 
 @dataclass(frozen=True)
@@ -184,6 +189,7 @@ class MenuItem:
     active_from: Optional[float]
     active_to: Optional[float]
     tenant_id: str
+    application_id: str = ""
 
     @property
     def is_branch(self) -> bool:
@@ -197,7 +203,8 @@ class MenuItem:
                    label_override=row["label_override"],
                    icon_override=row["icon_override"],
                    enabled=bool(row["enabled"]), active_from=row["active_from"],
-                   active_to=row["active_to"], tenant_id=row["tenant_id"])
+                   active_to=row["active_to"], tenant_id=row["tenant_id"],
+                   application_id=row["application_id"])
 
 
 @dataclass(frozen=True)

@@ -69,6 +69,22 @@ The designer declares each node's allowed transient names and attribute constrai
 
 ## Persistence and execution
 
+- A visual run has a separate `fnd_flow_rt_contexts` row for its business `flow_context`; this is distinct from the executor's frame/checkpoint JSON on the run status row and from invocation `parameters`. On first worker execution, the worker reuses an existing context row or builds one from the original inputs, initiator identity/organization records, then registered initiator and business context providers. It persists the resulting snapshot before Start executes. Python Activities read and may update it through `ctx.flow_context`; changes are persisted after a successful activity or wait handoff. Failed attempts retain their exact context in the activity checkpoint and retries restore that checkpoint. Rewind creates a new run with the same parameters and initializes a fresh context through the same loading sequence.
+- App-specific initiator context tables and business tables are loaded by `@flow_context_provider(source="initiator")` and `@flow_context_provider(source="business")` functions in modules discovered by the worker. Providers receive `store`, the run identity, invocation inputs, and already resolved initiator data, and return JSON-serializable mappings. Use `store.tenant_id` / `store.environment_id` in database predicates. Their source-specific output fills missing keys in registration order; it does not overwrite earlier context values.
+
+```python
+from gyrfalcon.flow import flow_context_provider
+
+
+@flow_context_provider(source="business")
+def load_store_context(source):
+    store_id = source["inputs"].get("store_id")
+    if not store_id:
+        return {}
+    # Query the application's store and legal-entity tables with tenant scope.
+    return {"store": load_store(source["store"], store_id)}
+```
+
 - `fnd_flow_attrs` stores design time attributes for flows, activities, and processes, including default values. Published definitions need an immutable attribute snapshot associated with their version; editing a draft must not change a published version.
 - A corresponding runtime attribute table stores values scoped to a unique flow instance and Activity or Process instance. The Activity's Python code can read the prior value and context and write its runtime attributes. A Process End writes the final Process attributes.
 - At the start of each Activity attempt, persist the exact execution context made available to it: incoming value, completed prior outputs, applicable flow/Process/Activity runtime attribute values, and the pinned graph and implementation versions. This is the Activity's retry checkpoint; retries must not recompute it from changed defaults or rerun earlier successful nodes.
@@ -94,5 +110,7 @@ The designer declares each node's allowed transient names and attribute constrai
 ## Implementation status
 
 The canvas edits version 2 visual graphs and calls the versioned design-time APIs. `fnd_flow_dt_*` and `fnd_flow_rt_*` tables are defined in SQLAlchemy metadata and Alembic revisions; the visual `GraphStore` publishes immutable graph snapshots and deployment pins. The visual executor supports Python, Gyrfalcon-agent, A2A, Notification and nested Process nodes, persisted context, bounded loop decisions, and wait/resume. Failed activities can be manually retried under the same run ID using their saved start context; automatic retry remains deferred. A process-pool daemon claims queued runs, handles schedules and wait timeouts, and records worker failures and bounce events. The dashboard exposes deployment, invocation, runtime inspection, response, and daemon-management endpoints; `gyrfalcon flow-daemon run` starts the standalone worker service. Flow Instances renders the pinned graph and per-visit attribute/context details. Its Run sample flow action publishes and queues a ten-Activity order flow with four exclusive decision forks for exercising branch and join behavior.
+
+The Flow product UI is owned by the `wf` app (`apps/wf/web`) and is deployed as its own frontend build. The Flow runtime remains part of the Gyrfalcon engine: its database objects keep the `fnd_` prefix and its engine SQL/migrations remain under `gyrfalcon/db`.
 
 Validation performed for this implementation: Python modules compile with `uv run python -m compileall -q gyrfalcon gyrfalcon_cli`, and `git diff --check` reports no whitespace errors. The Alembic revision has not been applied: the local PostgreSQL 17 cluster is down and owned by `nobody`, and the configured `.env` DSN points to a remote Supabase database. The remote database was not changed. Start the local cluster with appropriate PostgreSQL administrator privileges, then run the schema upgrade before starting the daemon.

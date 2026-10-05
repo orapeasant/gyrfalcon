@@ -14,8 +14,13 @@ _PRE_ALEMBIC_ADDITIONS = frozenset({"fnd_flow_attrs"})
 _POST_BASELINE_VISUAL_TABLES = frozenset({
     "fnd_flow_dt_definitions", "fnd_flow_dt_definition_versions",
     "fnd_flow_dt_attrs", "fnd_flow_dt_notif", "fnd_flow_dt_deployments",
-    "fnd_flow_rt_statuses", "fnd_flow_rt_node_statuses",
+    "fnd_flow_rt_statuses", "fnd_flow_rt_contexts", "fnd_flow_rt_node_statuses",
     "fnd_flow_rt_events", "fnd_flow_rt_attrs", "fnd_flow_rt_notif",
+})
+_POST_BASELINE_MODULE_TABLES = frozenset({
+    "fnd_applications",
+    "fnd_nav_page_aliases", "fnd_auth_user_roles", "fnd_auth_group_roles",
+    "fnd_auth_group_provider_mappings",
 })
 _POST_BASELINE_MESSAGE_COLUMNS = frozenset({
     "flow_node_status_id", "message_kind", "channel", "direction", "subject",
@@ -32,6 +37,9 @@ _POST_BASELINE_SESSION_INDEXES = frozenset({
     "idx_sessions_flow_run", "uq_sessions_flow_node", "idx_sessions_run_status",
 })
 _POST_BASELINE_FLOW_DEFINITION_COLUMNS = frozenset({"enabled", "published"})
+_POST_BASELINE_PAGE_COLUMNS = frozenset({"app_key"})
+_POST_BASELINE_PAGE_INDEXES = frozenset({"idx_nav_pages_app"})
+_POST_BASELINE_APPLICATION_COLUMNS = frozenset({"application_id"})
 
 
 def _config(connection=None) -> Config:
@@ -71,7 +79,8 @@ def _adopt_current_schema(connection) -> None:
         return  # empty application schema: Alembic creates the baseline
 
     missing_tables = expected - existing
-    unsupported = missing_tables - _PRE_ALEMBIC_ADDITIONS - _POST_BASELINE_VISUAL_TABLES
+    unsupported = (missing_tables - _PRE_ALEMBIC_ADDITIONS - _POST_BASELINE_VISUAL_TABLES
+                   - _POST_BASELINE_MODULE_TABLES)
     if unsupported:
         raise RuntimeError(
             "Cannot adopt an older PostgreSQL schema; missing tables: "
@@ -88,6 +97,10 @@ def _adopt_current_schema(connection) -> None:
             missing_columns -= _POST_BASELINE_SESSION_COLUMNS
         elif name == "fnd_flow_dt_definitions":
             missing_columns -= _POST_BASELINE_FLOW_DEFINITION_COLUMNS
+        elif name == "fnd_nav_pages":
+            missing_columns -= _POST_BASELINE_PAGE_COLUMNS
+        elif name in {"fnd_nav_functions", "fnd_nav_menus", "fnd_nav_menu_items"}:
+            missing_columns -= _POST_BASELINE_APPLICATION_COLUMNS
         if missing_columns:
             raise RuntimeError(
                 f"Cannot adopt {name}; missing columns: {', '.join(sorted(missing_columns))}"
@@ -100,6 +113,8 @@ def _adopt_current_schema(connection) -> None:
             missing_indexes -= _POST_BASELINE_MESSAGE_INDEXES
         elif name == "ai_sessions":
             missing_indexes -= _POST_BASELINE_SESSION_INDEXES
+        elif name == "fnd_nav_pages":
+            missing_indexes -= _POST_BASELINE_PAGE_INDEXES
         if missing_indexes:
             raise RuntimeError(
                 f"Cannot adopt {name}; missing indexes: {', '.join(sorted(missing_indexes))}"

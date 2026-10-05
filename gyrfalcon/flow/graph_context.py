@@ -15,6 +15,7 @@ class ActivityContext:
     outputs: dict[str, Any]
     flow_attributes: dict[str, Any]
     attributes: dict[str, Any]
+    flow_context: dict[str, Any] = field(default_factory=dict)
     human_response: Any = None
 
     @property
@@ -24,7 +25,10 @@ class ActivityContext:
     @property
     def context(self) -> dict[str, Any]:
         return {"inputs": self.inputs, "outputs": self.outputs,
-                "flow_attributes": self.flow_attributes}
+                "flow_attributes": self.flow_attributes,
+                "flow_context": self.flow_context,
+                "incoming_value": self.incoming_value,
+                "attributes": self.attributes}
 
     def attr(self, name: str) -> Any:
         if name in self.attributes:

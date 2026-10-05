@@ -18,9 +18,11 @@ around it would be borrowing a mechanism built for a different problem.
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import logging
 import inspect
 import re
+import shutil
 import sys
 import threading
 from pathlib import Path
@@ -69,12 +71,14 @@ def list_activities() -> list[dict[str, Any]]:
     for name, version, template in templates:
         source = inspect.getsourcefile(template.fn)
         source_path = Path(source).resolve() if source else None
+        editable = bool(source_path and source_path.is_relative_to(editable_dir))
         result.append({
             "name": name,
             "version": version,
-            "module": source_path.stem if source_path else None,
+            "module": source_path.relative_to(editable_dir).with_suffix("").as_posix()
+                if editable else source_path.stem if source_path else None,
             "description": (template.description or "").strip(),
-            "editable": bool(source_path and source_path.parent == editable_dir),
+            "editable": editable,
         })
     return result
 
@@ -106,9 +110,8 @@ def _import_single_file(path: Path) -> None:
     or duplicated file can be re-imported without walking the whole
     directory — `save_source` and `duplicate_source` both need exactly this,
     not a second implementation of it."""
-    spec = importlib.util.spec_from_file_location(
-        f"gyrfalcon_user_flow_{path.stem}", str(path)
-    )
+    identity = hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:12]
+    spec = importlib.util.spec_from_file_location(f"gyrfalcon_user_flow_{identity}", str(path))
     if spec is None or spec.loader is None:
         raise ValueError(f"Could not load {path.name}")
     module = importlib.util.module_from_spec(spec)
@@ -141,8 +144,8 @@ def discover_flows(flows_dir: Optional[Path] = None) -> int:
 
     imported = 0
     errors: dict[str, str] = {}
-    for py_file in sorted(flows_dir.glob("*.py")):
-        if py_file.name.startswith("_"):
+    for py_file in sorted(flows_dir.rglob("*.py")):
+        if any(part.startswith("_") for part in py_file.relative_to(flows_dir).parts):
             continue
         try:
             _import_single_file(py_file)
@@ -167,19 +170,44 @@ def get_import_errors() -> dict[str, str]:
 
 
 def list_activity_modules() -> list[str]:
-    """List editable Python modules in the profile's flows directory."""
+    """List editable Python modules relative to the profile's flows directory."""
     from gyrfalcon.gyrfalcon_constants import get_flows_dir
 
-    return sorted(path.stem for path in get_flows_dir().glob("*.py")
-                  if not path.name.startswith("_") and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", path.stem))
+    root = get_flows_dir().resolve()
+    return sorted(path.relative_to(root).with_suffix("").as_posix()
+                  for path in root.rglob("*.py")
+                  if not any(part.startswith("_") for part in path.relative_to(root).parts)
+                  and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", path.stem))
+
+
+def list_activity_folders() -> list[str]:
+    """List all user flow folders, including empty folders."""
+    from gyrfalcon.gyrfalcon_constants import get_flows_dir
+
+    root = get_flows_dir().resolve()
+    return sorted(path.relative_to(root).as_posix() for path in root.rglob("*")
+                  if path.is_dir() and not path.is_symlink()
+                  and not any(part.startswith("_") for part in path.relative_to(root).parts))
+
+
+def _activity_path(name: str, *, directory: bool = False) -> Path:
+    """Resolve a validated relative script/folder path below ~/.gyrfalcon/flows."""
+    from gyrfalcon.gyrfalcon_constants import get_flows_dir
+
+    if not isinstance(name, str) or "\\" in name or name.startswith("/"):
+        raise ValueError("Path must be relative to the flows folder.")
+    parts = name.split("/")
+    if not parts or any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", part) for part in parts):
+        raise ValueError("Path segments must use letters, numbers, and underscores, and start with a letter.")
+    root = get_flows_dir().resolve()
+    path = root.joinpath(*parts) if directory else root.joinpath(*parts[:-1], f"{parts[-1]}.py")
+    if not path.resolve().is_relative_to(root):
+        raise ValueError("Path must stay inside the flows folder.")
+    return path
 
 
 def get_activity_module(name: str) -> str:
-    from gyrfalcon.gyrfalcon_constants import get_flows_dir
-
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
-        raise ValueError("Module name must use letters, numbers, and underscores.")
-    path = get_flows_dir() / f"{name}.py"
+    path = _activity_path(name)
     if not path.is_file():
         raise ValueError(f"Module {name!r} does not exist.")
     return path.read_text(encoding="utf-8")
@@ -187,13 +215,9 @@ def get_activity_module(name: str) -> str:
 
 def save_activity_module(name: str, content: str) -> None:
     """Write a user activity module and restore disk and registry on import failure."""
-    from gyrfalcon.gyrfalcon_constants import get_flows_dir
-
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
-        raise ValueError("Module name must use letters, numbers, and underscores.")
     if not content.strip():
         raise ValueError("Python source cannot be empty.")
-    path = get_flows_dir() / f"{name}.py"
+    path = _activity_path(name)
     compile(content, str(path), "exec")
     path.parent.mkdir(parents=True, exist_ok=True)
     previous = path.read_text(encoding="utf-8") if path.exists() else None
@@ -222,6 +246,52 @@ def save_activity_module(name: str, content: str) -> None:
             _ACTIVITIES.clear()
             _ACTIVITIES.update(old_activities)
         raise ValueError(f"Could not import {name}.py: {exc}") from exc
+
+
+def create_activity_folder(name: str) -> None:
+    path = _activity_path(name, directory=True)
+    if path.exists():
+        raise ValueError(f"Folder {name!r} already exists.")
+    path.mkdir(parents=True, exist_ok=False)
+
+
+def delete_activity_path(name: str, *, directory: bool = False) -> None:
+    """Delete a script or folder and unregister code loaded from its path."""
+    from gyrfalcon.gyrfalcon_constants import get_flows_dir
+
+    path = _activity_path(name, directory=directory)
+    if not path.exists():
+        raise ValueError(f"{name!r} does not exist.")
+    if path.is_symlink() or not path.resolve().is_relative_to(get_flows_dir().resolve()):
+        raise ValueError("Cannot delete a symbolic link or a path outside the flows folder.")
+    if directory:
+        if not path.is_dir():
+            raise ValueError(f"{name!r} is not a folder.")
+        shutil.rmtree(path)
+    else:
+        if not path.is_file():
+            raise ValueError(f"{name}.py is not a script.")
+        path.unlink()
+    _unregister_deleted_source(path)
+    discover_flows()
+
+
+def _unregister_deleted_source(path: Path) -> None:
+    with _LOCK:
+        for key, template in list(_REGISTRY.items()):
+            try:
+                source = Path(inspect.getsourcefile(template.fn) or "").resolve()
+            except (TypeError, OSError):
+                continue
+            if source == path or path.is_dir() and source.is_relative_to(path):
+                _REGISTRY.pop(key, None)
+        for key, template in list(_ACTIVITIES.items()):
+            try:
+                source = Path(inspect.getsourcefile(template.fn) or "").resolve()
+            except (TypeError, OSError):
+                continue
+            if source == path or path.is_dir() and source.is_relative_to(path):
+                _ACTIVITIES.pop(key, None)
 
 
 # ══════════════════════════════════════════════════════════════════════════

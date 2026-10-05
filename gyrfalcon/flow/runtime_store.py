@@ -17,7 +17,7 @@ from gyrfalcon.db.migrations import ensure_schema
 from gyrfalcon.db.schema import (
     AUTH_MEMBERSHIP_ATTRIBUTES, AUTH_ORGS, AUTH_USERS,
     FLOW_DT_ATTRS, FLOW_DT_DEFINITIONS, FLOW_DT_DEFINITION_VERSIONS,
-    FLOW_DT_DEPLOYMENTS, FLOW_DT_NOTIF, FLOW_RT_ATTRS, FLOW_RT_EVENTS,
+    FLOW_DT_DEPLOYMENTS, FLOW_DT_NOTIF, FLOW_RT_ATTRS, FLOW_RT_CONTEXTS, FLOW_RT_EVENTS,
     FLOW_RT_NODE_STATUSES, FLOW_RT_NOTIF, FLOW_RT_STATUSES, SESSIONS,
     SESSION_MESSAGES,
 )
@@ -383,6 +383,39 @@ class FlowRuntimeStore:
         with self.db.connect() as conn:
             return _row(conn.connection.execute(select(t).where(self._scope(t), t.c.id == run_id)))
 
+    def get_flow_context(self, run_id: str) -> dict[str, Any] | None:
+        """Load this run's separately persisted business context, if initialized."""
+        t = FLOW_RT_CONTEXTS
+        with self.db.connect() as conn:
+            row = _row(conn.connection.execute(select(t.c.flow_context).where(
+                self._scope(t), t.c.run_id == run_id)))
+        return deepcopy(row["flow_context"]) if row is not None else None
+
+    def save_flow_context(self, run_id: str, flow_context: Mapping[str, Any], *,
+                          only_if_absent: bool = False) -> dict[str, Any]:
+        """Persist JSON business context without mixing it into executor frames."""
+        if not isinstance(flow_context, Mapping):
+            raise ValueError("Flow context must be an object")
+        now = time.time()
+        t = FLOW_RT_CONTEXTS
+        values = dict(tenant_id=self.tenant_id, environment_id=self.environment_id,
+                      run_id=run_id, flow_context=dict(flow_context),
+                      created_at=now, updated_at=now)
+        with self.db.connect() as conn:
+            stmt = pg_insert(t).values(**values)
+            if only_if_absent:
+                stmt = stmt.on_conflict_do_nothing(
+                    index_elements=[t.c.tenant_id, t.c.environment_id, t.c.run_id])
+            else:
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[t.c.tenant_id, t.c.environment_id, t.c.run_id],
+                    set_={"flow_context": dict(flow_context), "updated_at": now})
+            conn.connection.execute(stmt)
+        saved = self.get_flow_context(run_id)
+        if saved is None:
+            raise KeyError(run_id)
+        return saved
+
     def list_runs(self, *, limit: int = 100, state: str | None = None) -> list[dict]:
         t = FLOW_RT_STATUSES
         stmt = select(t).where(self._scope(t)).order_by(t.c.created_at.desc()).limit(limit)
@@ -449,7 +482,7 @@ class FlowRuntimeStore:
                     "activity_context": {
                         key: deepcopy(checkpoint.get(key))
                         for key in ("incoming_value", "inputs", "outputs",
-                                    "flow_attributes", "attributes")
+                                    "flow_attributes", "attributes", "flow_context")
                     },
                 }
             return _row(conn.connection.execute(update(r).where(self._scope(r),
@@ -484,6 +517,8 @@ class FlowRuntimeStore:
                 FLOW_RT_EVENTS.c.run_id == run_id))
             conn.connection.execute(FLOW_RT_ATTRS.delete().where(self._scope(FLOW_RT_ATTRS),
                 FLOW_RT_ATTRS.c.run_id == run_id))
+            conn.connection.execute(FLOW_RT_CONTEXTS.delete().where(self._scope(FLOW_RT_CONTEXTS),
+                FLOW_RT_CONTEXTS.c.run_id == run_id))
             conn.connection.execute(n.delete().where(self._scope(n), n.c.run_id == run_id))
             conn.connection.execute(r.delete().where(self._scope(r), r.c.id == run_id))
             return True

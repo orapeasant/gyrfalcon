@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:aie": "tsc --project ../apps/aie/web/tsconfig.json && GYRFALCON_APP_KEY=aie vite build",
+    "build:wf": "tsc --project ../apps/wf/web/tsconfig.json && GYRFALCON_APP_KEY=wf vite build",
+    "build:fnd": "tsc --project ../apps/fnd/web/tsconfig.json && GYRFALCON_APP_KEY=fnd vite build",
+    "build:apps": "npm run build:aie && npm run build:wf && npm run build:fnd",
     "preview": "vite preview",
     "lint": "eslint src/"
   },

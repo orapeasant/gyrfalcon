@@ -1,0 +1,2 @@
+"""Database-backed application catalog."""
+

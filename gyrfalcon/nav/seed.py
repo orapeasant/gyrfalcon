@@ -22,40 +22,43 @@ from gyrfalcon.nav.models import KIND_PAGE, WRITE
 
 # ── The page catalog ─────────────────────────────────────────────────────────
 #
-# (key, route, label, icon) — a transcription of `web/src/App.tsx`'s NAV plus
-# the Applications hub. `NavApplicationsSection` fetches user-created
-# applications and renders them itself; those children are data, not routes, so
-# only the hub appears here (§11.1).
+# (key, route, label, icon, app_key) — the DB route catalog for each app.
+# Application records remain data; their detail view is reached through the
+# registered applications.detail route and is not injected into navigation.
 
-PAGES: tuple[tuple[str, str, str, str], ...] = (
-    ("chat", "/chat", "Chat", "MessageSquare"),
-    ("sessions", "/sessions", "Sessions", "History"),
-    ("analytics", "/analytics", "Analytics", "BarChart2"),
-    ("tokenomics.report", "/tokenomics/report", "Report", "BarChart2"),
-    ("tokenomics.estimation", "/tokenomics/estimate", "Estimation", "Calculator"),
-    ("applications.manage", "/applications/manage", "Applications", "AppWindow"),
-    ("flow.instances", "/flows/instances", "Instances", "Play"),
-    ("flow.tasks", "/flows/tasks", "My Tasks", "Inbox"),
-    ("flow.definitions", "/flows/definitions", "Definitions", "FileCode"),
-    ("flow.designer", "/flows/designer", "Designer", "Workflow"),
-    ("flow.deployments", "/flows/deployments", "Deployments", "CalendarClock"),
-    ("flow.events", "/flows/events", "Events", "Radio"),
-    ("ai.models", "/models", "Models", "Cpu"),
-    ("ai.mcp", "/mcp", "MCP Servers", "Server"),
-    ("ai.agents", "/agents", "Agents", "Users"),
-    ("ai.skills", "/skills", "Skills", "BookOpen"),
-    ("ai.plugins", "/plugins", "Plugins", "Puzzle"),
-    ("ai.routing", "/routing", "Routing", "Workflow"),
-    ("ai.guardrail", "/guardrail", "Guardrail", "ShieldCheck"),
-    ("admin.scheduler", "/scheduler", "Scheduler", "Clock"),
-    ("admin.profiles", "/profiles", "Profiles", "Users"),
-    ("admin.config", "/config", "Configurations", "Settings"),
-    ("admin.logs", "/logs", "Logs", "ScrollText"),
+PAGES: tuple[tuple[str, str, str, str, str], ...] = (
+    ("chat", "/chat", "Chat", "MessageSquare", "aie"),
+    ("sessions", "/sessions", "Sessions", "History", "aie"),
+    ("analytics", "/analytics", "Analytics", "BarChart2", "aie"),
+    ("tokenomics.report", "/tokenomics/report", "Report", "BarChart2", "aie"),
+    ("tokenomics.estimation", "/tokenomics/estimate", "Estimation", "Calculator", "aie"),
+    ("applications.manage", "/applications/manage", "Applications", "AppWindow", "fnd"),
+    ("applications.detail", "/applications/:id", "Application", "AppWindow", "fnd"),
+    ("flow.instances", "/flows/instances", "Instances", "Play", "wf"),
+    ("flow.tasks", "/flows/tasks", "My Tasks", "Inbox", "wf"),
+    ("flow.definitions", "/flows/definitions", "Definitions", "FileCode", "wf"),
+    ("flow.designer", "/flows/designer", "Designer", "Workflow", "wf"),
+    ("flow.deployments", "/flows/deployments", "Deployments", "CalendarClock", "wf"),
+    ("flow.events", "/flows/events", "Events", "Radio", "wf"),
+    ("ai.models", "/models", "Models", "Cpu", "fnd"),
+    ("ai.mcp", "/mcp", "MCP Servers", "Server", "fnd"),
+    ("ai.agents", "/agents", "Agents", "Users", "fnd"),
+    ("ai.skills", "/skills", "Skills", "BookOpen", "fnd"),
+    ("ai.plugins", "/plugins", "Plugins", "Puzzle", "fnd"),
+    ("ai.routing", "/routing", "Routing", "Workflow", "fnd"),
+    ("ai.guardrail", "/guardrail", "Guardrail", "ShieldCheck", "fnd"),
+    ("admin.scheduler", "/scheduler", "Scheduler", "Clock", "fnd"),
+    ("admin.profiles", "/profiles", "Profiles", "Users", "fnd"),
+    ("admin.config", "/config", "Configurations", "Settings", "fnd"),
+    ("admin.logs", "/logs", "Logs", "ScrollText", "fnd"),
     ("security.service_accounts", "/security/service-accounts",
-     "Service Accounts", "KeyRound"),
-    ("security.secrets", "/security/secrets", "Secret Store", "Lock"),
-    ("security.users", "/security/users", "Users & Groups", "UsersRound"),
-    ("security.roles", "/security/roles", "Roles", "ShieldCheck"),
+     "Service Accounts", "KeyRound", "fnd"),
+    ("security.secrets", "/security/secrets", "Secret Store", "Lock", "fnd"),
+    ("security.users", "/security/users", "Users & Groups", "UsersRound", "fnd"),
+    ("security.roles", "/security/roles", "Roles", "ShieldCheck", "fnd"),
+    ("developer.functions", "/developer/functions", "Functions", "Workflow", "fnd"),
+    ("developer.menus", "/developer/menus", "Menus", "PanelTop", "fnd"),
+    ("developer.menu_items", "/developer/menu-items", "Menu Items", "ListTree", "fnd"),
 )
 
 # ── Shared sub-menus ─────────────────────────────────────────────────────────
@@ -80,30 +83,28 @@ SUBMENUS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
     ("Administration", "Wrench",
      ("admin.scheduler", "admin.profiles", "admin.config", "admin.logs"),
      ("Security",)),
+    ("Application Developer", "PanelTop",
+     ("applications.manage", "developer.functions", "developer.menus",
+      "developer.menu_items"), ()),
 )
 
 # ── Role menus, and the roles that carry them ────────────────────────────────
 
 ROLE_MENUS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
-    ("App Developer Menu", "Zap",
+    ("Administrator Menu", "Wrench",
      ("chat", "sessions", "analytics", "applications.manage"),
-     ("Flow", "Tokenomics", "AI Engine")),
-    ("System Admin Menu", "Wrench", ("flow.designer",), ("Administration",)),
-    # `identity.LOCAL` carries roles={"operator"}, so a single-user install
-    # must resolve to the full sidebar it already had. This menu branches to
-    # both of the above rather than repeating their items (§11.6).
-    ("Full Access Menu", "Wrench", (),
-     ("App Developer Menu", "System Admin Menu")),
+     ("Flow", "Tokenomics", "AI Engine", "Administration")),
+    ("Developer Menu", "Wrench",
+     ("chat", "sessions", "analytics"),
+     ("Flow", "Tokenomics", "AI Engine", "Administration", "Application Developer")),
 )
 
 ROLES: tuple[tuple[str, str, str, str], ...] = (
     # (name, label, menu name, description)
-    ("app_developer", "App Developer", "App Developer Menu",
-     "Build and operate flows, agents and applications."),
-    ("system_admin", "System Admin", "System Admin Menu",
-     "Administer the install: scheduling, configuration, logs and security."),
-    ("operator", "Full Access", "Full Access Menu",
-     "Everything. The default for a single-user install."),
+    ("system_admin", "Administrator", "Administrator Menu",
+     "Administrator access."),
+    ("app_developer", "Developer", "Developer Menu",
+     "Developer access, including navigation configuration."),
 )
 
 
@@ -116,10 +117,11 @@ def ensure_pages(store) -> int:
     """
     existing = {p.key for p in store.list_pages()}
     created = 0
-    for key, route, label, icon in PAGES:
+    for key, route, label, icon, app_key in PAGES:
         if key in existing:
+            store.set_page_app_key(key, app_key)
             continue
-        store.create_page(key=key, route=route, label=label, icon=icon)
+        store.create_page(key=key, route=route, label=label, icon=icon, app_key=app_key)
         created += 1
     return created
 
@@ -145,7 +147,7 @@ def ensure_seeded(store, scope=None) -> bool:
     # entry, so the seed introduces no other kind (§11.3); the layer earns its
     # keep the moment someone adds a flow Function by hand.
     functions: dict[str, str] = {}
-    for key, _route, label, icon in PAGES:
+    for key, _route, label, icon, _app_key in PAGES:
         fn = store.create_function(key=key, name=label, kind=KIND_PAGE,
                                    target=key, icon=icon, scope=scope)
         functions[key] = fn.id
@@ -157,7 +159,10 @@ def ensure_seeded(store, scope=None) -> bool:
         order = 0
         for page_key in page_keys:
             store.add_item(menu.id, function_id=functions[page_key],
-                           access=WRITE, sort_order=order, scope=scope)
+                           access=WRITE, sort_order=order,
+                           label_override=("Manage Applications"
+                                           if page_key == "applications.manage" else None),
+                           scope=scope)
             order += 1
         for branch_name in branches:
             store.add_item(menu.id, ref_menu_id=menus[branch_name],
