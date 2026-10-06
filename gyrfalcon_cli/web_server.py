@@ -3522,7 +3522,16 @@ async def list_api_keys(request: Request):
 
 def _require_security_admin(request: Request):
     principal = _verify_token(request)
-    if not principal.has_role("admin", "system_admin"):
+    from gyrfalcon.nav.store import get_nav_store
+
+    # A role can be granted directly or inherited through an application
+    # Group. Use the same effective-role resolver as navigation so the
+    # Security pages remain usable for either assignment path.
+    roles = set(principal.roles)
+    roles.update(get_nav_store().role_names_for_user(
+        principal.tenant_id, principal.user_id,
+    ))
+    if not roles.intersection({"admin", "system_admin"}):
         raise HTTPException(403, "Administrator role required")
     return principal
 
@@ -3793,7 +3802,7 @@ class SecurityUserCreate(BaseModel):
     password: str
     display_name: str = ""
     email: str = ""
-    roles: list[str] = []
+    direct_role_ids: list[str] = []
     group_ids: list[str] = []
 
 
@@ -3801,7 +3810,13 @@ class SecurityUserUpdate(BaseModel):
     display_name: str = ""
     email: str = ""
     disabled: bool = False
-    roles: list[str] = []
+
+
+class SecurityAssignmentBody(BaseModel):
+    role_ids: list[str] = []
+
+
+class SecurityUserGroupsBody(BaseModel):
     group_ids: list[str] = []
 
 
@@ -3836,8 +3851,14 @@ async def get_security_access(request: Request):
         ensure_seeded(nav)
         nav = get_nav_store()
     return {
-        "users": auth.list_tenant_users(principal.tenant_id),
-        "groups": auth.list_groups(principal.tenant_id),
+        "users": [
+            {**user, "direct_role_ids": auth.user_role_ids(principal.tenant_id, user["id"])}
+            for user in auth.list_tenant_users(principal.tenant_id)
+        ],
+        "groups": [
+            {**group, "role_ids": auth.group_role_ids(principal.tenant_id, group["id"])}
+            for group in auth.list_groups(principal.tenant_id)
+        ],
         "roles": [_access_role_payload(role) for role in nav.list_roles()],
         "menus": [{"id": menu.id, "name": menu.name} for menu in nav.list_menus()],
     }
@@ -3848,8 +3869,9 @@ async def create_security_user(request: Request, body: SecurityUserCreate):
     principal = _require_security_admin(request)
     from gyrfalcon.auth.store import get_auth_store
     from gyrfalcon.nav.store import get_nav_store
-    allowed = {role.name for role in get_nav_store().list_roles()}
-    if not set(body.roles).issubset(allowed):
+    nav = get_nav_store()
+    allowed_ids = {role.id for role in nav.list_roles()}
+    if not set(body.direct_role_ids).issubset(allowed_ids):
         raise HTTPException(400, "One or more selected roles do not exist")
     auth = get_auth_store()
     if not set(body.group_ids).issubset({group["id"] for group in auth.list_groups(principal.tenant_id)}):
@@ -3857,9 +3879,10 @@ async def create_security_user(request: Request, body: SecurityUserCreate):
     try:
         user = auth.create_local_user(
             principal.tenant_id, body.username, body.password, body.display_name,
-            body.email, body.roles or ["app_developer"],
+            body.email, [],
         )
         auth.set_user_groups(principal.tenant_id, user["id"], body.group_ids)
+        auth.set_user_roles(principal.tenant_id, user["id"], body.direct_role_ids)
         user = next(u for u in auth.list_tenant_users(principal.tenant_id) if u["id"] == user["id"])
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -3872,16 +3895,13 @@ async def update_security_user(request: Request, user_id: str, body: SecurityUse
     from gyrfalcon.auth.store import get_auth_store
     from gyrfalcon.nav.store import get_nav_store
     auth = get_auth_store()
-    allowed = {role.name for role in get_nav_store().list_roles()} | {"admin"}
-    if not set(body.roles).issubset(allowed):
-        raise HTTPException(400, "One or more selected roles do not exist")
-    if not set(body.group_ids).issubset({group["id"] for group in auth.list_groups(principal.tenant_id)}):
-        raise HTTPException(400, "One or more selected groups do not exist")
     before = next((u for u in auth.list_tenant_users(principal.tenant_id) if u["id"] == user_id), None)
     if before is None:
         raise HTTPException(404, "User not found")
-    is_admin = bool(set(before["roles"]) & {"admin", "system_admin"})
-    stays_admin = bool(set(body.roles) & {"admin", "system_admin"})
+    before_roles = {r.name for r in get_nav_store().list_roles()
+                    if r.id in auth.user_role_ids(principal.tenant_id, user_id)}
+    is_admin = bool(set(before["roles"]) & {"admin", "system_admin"} or before_roles & {"admin", "system_admin"})
+    stays_admin = is_admin
     if is_admin and (not stays_admin or body.disabled):
         admins = [u for u in auth.list_tenant_users(principal.tenant_id)
                   if set(u["roles"]) & {"admin", "system_admin"} and not u["disabled"]]
@@ -3889,15 +3909,80 @@ async def update_security_user(request: Request, user_id: str, body: SecurityUse
             raise HTTPException(400, "The last active administrator cannot be disabled or demoted")
     if not auth.update_tenant_user(
         principal.tenant_id, user_id, display_name=body.display_name,
-        email=body.email, disabled=body.disabled, roles=body.roles,
+        email=body.email, disabled=body.disabled, roles=before["roles"],
     ):
         raise HTTPException(404, "User not found")
+    return {"user": next(u for u in auth.list_tenant_users(principal.tenant_id) if u["id"] == user_id)}
+
+
+@app.get("/api/security/access/users/{user_id}/details")
+async def get_security_user_details(request: Request, user_id: str):
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
+    from gyrfalcon.nav.store import get_nav_store
+    auth, nav = get_auth_store(), get_nav_store()
+    users = auth.list_tenant_users(principal.tenant_id)
+    user = next((u for u in users if u["id"] == user_id), None)
+    if user is None:
+        raise HTTPException(404, "User not found")
+    roles = {r.id: r for r in nav.list_roles()}
+    role_ids_by_name = {r.name: r.id for r in roles.values()}
+    groups_by_id = {g["id"]: g for g in auth.list_groups(principal.tenant_id)}
+    direct_ids = set(auth.user_role_ids(principal.tenant_id, user_id))
+    direct_ids.update(role_ids_by_name[name] for name in user["roles"]
+                      if name in role_ids_by_name)
+    group_ids = set(auth.user_group_ids(principal.tenant_id, user_id))
+    group_role_ids = {rid for gid in group_ids for rid in auth.group_role_ids(principal.tenant_id, gid)}
+    effective_ids = direct_ids | group_role_ids
+    effective = []
+    for role_id in sorted(effective_ids):
+        role = roles.get(role_id)
+        if role:
+            effective.append({**_access_role_payload(role),
+                              "sources": (["Direct"] if role_id in direct_ids else []) +
+                                         ([groups_by_id[g]["name"] for g in group_ids
+                                           if role_id in auth.group_role_ids(principal.tenant_id, g)]),
+                              "group_ids": [g for g in group_ids
+                                            if role_id in auth.group_role_ids(principal.tenant_id, g)]})
+    # Keep one root entry per menu, matching the sidebar's root-only deduplication.
+    preview = []
+    seen_menus = set()
+    for role in effective:
+        if not role["menu_id"] or role["menu_id"] in seen_menus:
+            continue
+        seen_menus.add(role["menu_id"])
+        menu = nav.get_menu(role["menu_id"])
+        tree, _ = nav.resolve_role(role["name"])
+        if menu and tree:
+            preview.append({"menu_id": menu.id, "label": menu.name, "icon": menu.icon,
+                            "role": role["label"] or role["name"],
+                            "items": [node.to_json() for node in tree]})
+    return {"direct_role_ids": sorted(direct_ids), "group_ids": sorted(group_ids),
+            "effective_roles": effective, "menu_preview": preview}
+
+
+@app.put("/api/security/access/users/{user_id}/groups")
+async def set_security_user_groups(request: Request, user_id: str, body: SecurityUserGroupsBody):
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
     try:
-        if not auth.set_user_groups(principal.tenant_id, user_id, body.group_ids):
+        if not get_auth_store().set_user_groups(principal.tenant_id, user_id, body.group_ids):
             raise HTTPException(404, "User not found")
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return {"user": next(u for u in auth.list_tenant_users(principal.tenant_id) if u["id"] == user_id)}
+    return {"status": "updated"}
+
+
+@app.put("/api/security/access/users/{user_id}/roles")
+async def set_security_user_roles(request: Request, user_id: str, body: SecurityAssignmentBody):
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
+    try:
+        if not get_auth_store().set_user_roles(principal.tenant_id, user_id, body.role_ids):
+            raise HTTPException(404, "User not found")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"status": "updated"}
 
 
 class SecurityPasswordReset(BaseModel):
@@ -3937,6 +4022,18 @@ async def update_security_group(request: Request, group_id: str, body: SecurityG
         raise HTTPException(409, "A group with that name already exists") from exc
     if not updated:
         raise HTTPException(404, "Group not found")
+    return {"status": "updated"}
+
+
+@app.put("/api/security/access/groups/{group_id}/roles")
+async def set_security_group_roles(request: Request, group_id: str, body: SecurityAssignmentBody):
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
+    try:
+        if not get_auth_store().set_group_roles(principal.tenant_id, group_id, body.role_ids):
+            raise HTTPException(404, "Group not found")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {"status": "updated"}
 
 
@@ -3989,11 +4086,29 @@ async def update_security_role(request: Request, role_id: str, body: SecurityRol
 
 @app.delete("/api/security/access/roles/{role_id}")
 async def delete_security_role(request: Request, role_id: str):
-    _require_security_admin(request)
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
     from gyrfalcon.nav.store import get_nav_store
-    if not get_nav_store().delete_role(role_id):
+    auth, nav = get_auth_store(), get_nav_store()
+    if nav.get_role(role_id) is None:
+        raise HTTPException(404, "Role not found")
+    auth.clear_role_assignments(principal.tenant_id, role_id)
+    if not nav.delete_role(role_id):
         raise HTTPException(404, "Role not found")
     return {"status": "deleted"}
+
+
+@app.get("/api/security/access/roles/{role_id}/holders")
+async def get_security_role_holders(request: Request, role_id: str):
+    principal = _require_security_admin(request)
+    from gyrfalcon.auth.store import get_auth_store
+    from gyrfalcon.nav.store import get_nav_store
+    auth, nav = get_auth_store(), get_nav_store()
+    role = nav.get_role(role_id)
+    if role is None:
+        raise HTTPException(404, "Role not found")
+    return {"group_ids": auth.role_group_ids(principal.tenant_id, role_id),
+            "direct_user_ids": auth.role_user_ids(principal.tenant_id, role_id)}
 
 
 @app.post("/api/auth/keys")

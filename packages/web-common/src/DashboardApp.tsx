@@ -223,15 +223,12 @@ function NavItemLink({ item, collapsed, indent = 0, activeAppKey }: {
       title={collapsed ? item.label : undefined}
       style={({ isActive }) => ({
         ...S.navItem(isActive, collapsed),
-        // Nested-group items get extra left padding so the hierarchy reads
-        // visually — only meaningful when expanded, since the collapsed
-        // sidebar shows icons only and has no room for it. Always a concrete
-        // value, never `undefined`: React's inline-style patcher treats an
-        // `undefined` value as "clear this property," which was silently
-        // deleting padding-left entirely (including the value the `padding`
-        // shorthand in S.navItem would otherwise supply) instead of falling
-        // back to it — the actual cause of items rendering unindented.
-        paddingLeft: collapsed ? "0px" : `${16 + indent * 12}px`,
+        // Hover and selection share one inset so the highlight never jumps
+        // across the nearest tree guide as the pointer moves.
+        paddingLeft: collapsed ? "0px" : (isActive || hovered) && indent > 0
+          ? "4px" : `${16 + indent * 16}px`,
+        marginLeft: collapsed ? "6px" : (isActive || hovered) && indent > 0
+          ? `${navGuideX(indent - 1) + 4}px` : "8px",
         background: hovered && !isActive
           ? "var(--nav-hover)"
           : isActive ? "var(--nav-active)" : "transparent",
@@ -261,8 +258,15 @@ function navGroupIsActive(group: NavGroup, pathname: string): boolean {
   );
 }
 
-function NavGroupSection({ group, collapsed, depth = 0, activeAppKey }: {
+function navGuideX(depth: number): number {
+  // Center the guide on the menu icon; the wider level step clears the next
+  // level's icon column.
+  return 32 + depth * 16;
+}
+
+function NavGroupSection({ group, collapsed, depth = 0, activeAppKey, connectFromX, maskAncestorX, isLastChild = false }: {
   group: NavGroup; collapsed: boolean; depth?: number; activeAppKey: AppKey | "all";
+  connectFromX?: number; maskAncestorX?: number; isLastChild?: boolean;
 }) {
   const location = useLocation();
   const anyActive = navGroupIsActive(group, location.pathname);
@@ -272,7 +276,7 @@ function NavGroupSection({ group, collapsed, depth = 0, activeAppKey }: {
   const [open, setOpen] = useState(depth === 0);
 
   return (
-    <div>
+    <div style={{ position: "relative" }}>
       {collapsed
         // Only the top-level group gets a separator when the sidebar is
         // collapsed; a nested one would just add a redundant divider between
@@ -280,7 +284,9 @@ function NavGroupSection({ group, collapsed, depth = 0, activeAppKey }: {
         ? (depth === 0 && <div style={S.groupSep} />)
         : (
           <div
-            style={{ ...S.groupLabel(collapsed), color: anyActive ? "var(--sidebar-fg)" : "var(--sidebar-muted)", paddingLeft: `${16 + depth * 12}px` }}
+            // Align submenu icons with function icons in the same child
+            // column; the additional level spacing leaves room for guides.
+            style={{ ...S.groupLabel(collapsed), color: anyActive ? "var(--sidebar-fg)" : "var(--sidebar-muted)", paddingLeft: `${26 + depth * 16}px` }}
             onClick={() => setOpen(o => !o)}
           >
             <span style={{ display:"flex", alignItems:"center", gap:"6px" }}>
@@ -291,11 +297,50 @@ function NavGroupSection({ group, collapsed, depth = 0, activeAppKey }: {
           </div>
         )
       }
-      {(open || collapsed) && group.items.map(item => (
+      {(open || collapsed) && group.items.map((item, index) => (
         item.type === "item"
-          ? <NavItemLink key={item.path} item={item} collapsed={collapsed} indent={depth + 1} activeAppKey={activeAppKey} />
-          : <NavGroupSection key={item.label} group={item} collapsed={collapsed} depth={depth + 1} activeAppKey={activeAppKey} />
+          ? <div key={item.path} style={{ position: "relative", display: "flow-root" }}>
+              <NavItemLink item={item} collapsed={collapsed} indent={depth + 1} activeAppKey={activeAppKey} />
+              {!collapsed && <div aria-hidden="true" style={{
+                position: "absolute", pointerEvents: "none", zIndex: 1,
+                left: navGuideX(depth), width: 10, top: "50%",
+                borderTop: "1px solid var(--sidebar-border)",
+              }} />}
+          </div>
+          : <NavGroupSection key={item.label} group={item} collapsed={collapsed} depth={depth + 1} activeAppKey={activeAppKey}
+              connectFromX={navGuideX(depth)}
+              maskAncestorX={navGuideX(depth)}
+              isLastChild={index === group.items.length - 1} />
       ))}
+      {!collapsed && connectFromX !== undefined && (
+        <div aria-hidden="true" style={{
+          position: "absolute", pointerEvents: "none", zIndex: 1,
+          left: connectFromX,
+          width: Math.max(0, navGuideX(depth) - 6 - connectFromX),
+          top: 16, borderTop: "1px solid var(--sidebar-border)",
+        }} />
+      )}
+      {!collapsed && maskAncestorX !== undefined && (
+        <div aria-hidden="true" style={{
+          position: "absolute", pointerEvents: "none", zIndex: 2,
+          // Keep the parent's spine through a T junction for a submenu with
+          // later siblings. A final submenu turns the spine at the junction
+          // and ends as an L.
+          left: maskAncestorX - 1, top: isLastChild ? 17 : 29, bottom: 2, width: 3,
+          background: "var(--sidebar-bg)",
+        }} />
+      )}
+      {!collapsed && open && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute", pointerEvents: "none", zIndex: 1,
+            left: navGuideX(depth), top: 22,
+            bottom: group.items.at(-1)?.type === "item" ? 16 : 3,
+            borderLeft: "1px solid var(--sidebar-border)",
+          }}
+        />
+      )}
     </div>
   );
 }

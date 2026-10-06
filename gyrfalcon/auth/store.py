@@ -40,6 +40,12 @@ class AuthStore:
         self._db = open_database(backend=self.backend, path=resolved, dsn=self.dsn)
         self.schema_version = ensure_schema(self._db)
 
+    @staticmethod
+    def _bump_nav_version(conn, tenant_id: str) -> None:
+        now = time.time()
+        conn.execute(sql.insert_nav_version(), (tenant_id, 0, now))
+        conn.execute(sql.BUMP_NAV_VERSION, (now, tenant_id))
+
     # -- organizations -------------------------------------------------------
     @staticmethod
     def _password_hash(password: str, salt: Optional[bytes] = None) -> str:
@@ -198,8 +204,14 @@ class AuthStore:
 
     def delete_group(self, tenant_id: str, group_id: str) -> bool:
         with self._db.connect() as conn:
+            conn.execute("DELETE FROM fnd_auth_group_roles WHERE tenant_id = ? AND group_id = ?",
+                         (tenant_id, group_id))
+            conn.execute("DELETE FROM fnd_auth_group_provider_mappings WHERE tenant_id = ? AND group_id = ?",
+                         (tenant_id, group_id))
             conn.execute(sql.DELETE_AUTH_GROUP_MEMBERS, (tenant_id, group_id))
             cur = conn.execute(sql.DELETE_AUTH_GROUP, (tenant_id, group_id))
+            if getattr(cur, "rowcount", 0):
+                self._bump_nav_version(conn, tenant_id)
             return bool(getattr(cur, "rowcount", 0))
 
     def user_group_ids(self, tenant_id: str, user_id: str) -> list[str]:
@@ -224,7 +236,113 @@ class AuthStore:
             for group_id in wanted:
                 conn.execute(sql.INSERT_GROUP_MEMBER,
                              (tenant_id, group_id, user_id, time.time()))
+            self._bump_nav_version(conn, tenant_id)
         return True
+
+    def user_role_ids(self, tenant_id: str, user_id: str) -> list[str]:
+        with self._db.connect() as conn:
+            rows = conn.fetchall(
+                "SELECT role_id FROM fnd_auth_user_roles WHERE tenant_id = ? AND user_id = ? ORDER BY role_id",
+                (tenant_id, user_id),
+            )
+        return [str(row["role_id"]) for row in rows]
+
+    def set_user_roles(self, tenant_id: str, user_id: str,
+                       role_ids: Sequence[str]) -> bool:
+        wanted = sorted(set(role_ids))
+        with self._db.connect() as conn:
+            if conn.fetchone(sql.GET_TENANT_USER, (user_id, tenant_id)) is None:
+                return False
+            known = {row["id"] for row in conn.fetchall(
+                "SELECT id FROM fnd_auth_roles WHERE tenant_id = ?", (tenant_id,))}
+            if not set(wanted).issubset(known):
+                raise ValueError("One or more roles do not exist in this organization")
+            conn.execute("DELETE FROM fnd_auth_user_roles WHERE tenant_id = ? AND user_id = ?",
+                         (tenant_id, user_id))
+            now = time.time()
+            for role_id in wanted:
+                conn.execute(
+                    "INSERT INTO fnd_auth_user_roles (tenant_id, user_id, role_id, created_at) VALUES (?, ?, ?, ?)",
+                    (tenant_id, user_id, role_id, now),
+                )
+            names = [row["name"] for row in conn.fetchall(
+                "SELECT name FROM fnd_auth_roles WHERE tenant_id = ? AND id IN (" +
+                ",".join("?" for _ in wanted) + ") ORDER BY name", (tenant_id, *wanted))] if wanted else []
+            conn.execute(sql.UPDATE_USER_ROLES, (json.dumps(names), user_id, tenant_id))
+            self._bump_nav_version(conn, tenant_id)
+        return True
+
+    def group_role_ids(self, tenant_id: str, group_id: str) -> list[str]:
+        with self._db.connect() as conn:
+            rows = conn.fetchall(
+                "SELECT role_id FROM fnd_auth_group_roles WHERE tenant_id = ? AND group_id = ? ORDER BY role_id",
+                (tenant_id, group_id),
+            )
+        return [str(row["role_id"]) for row in rows]
+
+    def set_group_roles(self, tenant_id: str, group_id: str,
+                        role_ids: Sequence[str]) -> bool:
+        wanted = sorted(set(role_ids))
+        with self._db.connect() as conn:
+            if conn.fetchone("SELECT id FROM fnd_auth_groups WHERE tenant_id = ? AND id = ?",
+                             (tenant_id, group_id)) is None:
+                return False
+            known = {row["id"] for row in conn.fetchall(
+                "SELECT id FROM fnd_auth_roles WHERE tenant_id = ?", (tenant_id,))}
+            if not set(wanted).issubset(known):
+                raise ValueError("One or more roles do not exist in this organization")
+            conn.execute("DELETE FROM fnd_auth_group_roles WHERE tenant_id = ? AND group_id = ?",
+                         (tenant_id, group_id))
+            now = time.time()
+            for role_id in wanted:
+                conn.execute(
+                    "INSERT INTO fnd_auth_group_roles (tenant_id, group_id, role_id, created_at) VALUES (?, ?, ?, ?)",
+                    (tenant_id, group_id, role_id, now),
+                )
+            self._bump_nav_version(conn, tenant_id)
+        return True
+
+    def role_group_ids(self, tenant_id: str, role_id: str) -> list[str]:
+        with self._db.connect() as conn:
+            rows = conn.fetchall(
+                "SELECT group_id FROM fnd_auth_group_roles WHERE tenant_id = ? AND role_id = ? ORDER BY group_id",
+                (tenant_id, role_id),
+            )
+        return [str(row["group_id"]) for row in rows]
+
+    def role_user_ids(self, tenant_id: str, role_id: str) -> list[str]:
+        with self._db.connect() as conn:
+            rows = conn.fetchall(
+                "SELECT user_id FROM fnd_auth_user_roles WHERE tenant_id = ? AND role_id = ? ORDER BY user_id",
+                (tenant_id, role_id),
+            )
+        return [str(row["user_id"]) for row in rows]
+
+    def clear_role_assignments(self, tenant_id: str, role_id: str) -> None:
+        with self._db.connect() as conn:
+            role = conn.fetchone(
+                "SELECT name FROM fnd_auth_roles WHERE tenant_id = ? AND id = ?",
+                (tenant_id, role_id),
+            )
+            conn.execute("DELETE FROM fnd_auth_user_roles WHERE tenant_id = ? AND role_id = ?",
+                         (tenant_id, role_id))
+            conn.execute("DELETE FROM fnd_auth_group_roles WHERE tenant_id = ? AND role_id = ?",
+                         (tenant_id, role_id))
+            if role:
+                memberships = conn.fetchall(
+                    "SELECT user_id, roles FROM fnd_auth_memberships WHERE org_id = ?",
+                    (tenant_id,),
+                )
+                for membership in memberships:
+                    try:
+                        names = json.loads(membership["roles"] or "[]")
+                    except (TypeError, ValueError):
+                        continue
+                    if role["name"] in names:
+                        conn.execute(sql.UPDATE_USER_ROLES,
+                                     (json.dumps([n for n in names if n != role["name"]]),
+                                      membership["user_id"], tenant_id))
+            self._bump_nav_version(conn, tenant_id)
 
     def create_org(self, name: str, org_id: Optional[str] = None) -> dict:
         org_id = org_id or _new_id()

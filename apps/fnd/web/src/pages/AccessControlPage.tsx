@@ -2,181 +2,88 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Plus, RefreshCw, Save, Trash2, UsersRound, ShieldCheck, X, KeyRound } from "lucide-react";
 import { fetchJSON } from "../lib/api";
 
-type UserRow = { id: string; username?: string; display_name: string; email: string; disabled: boolean; kind: string; roles: string[]; group_ids: string[]; last_login_at?: number | null };
-type GroupRow = { id: string; name: string; description: string; user_ids: string[] };
+type UserRow = { id: string; username?: string; display_name: string; email: string; disabled: boolean; kind: string; roles: string[]; group_ids: string[]; direct_role_ids: string[]; last_login_at?: number | null };
+type GroupRow = { id: string; name: string; description: string; user_ids: string[]; role_ids: string[] };
 type RoleRow = { id: string; name: string; label: string; menu_id: string | null; description: string; enabled: boolean };
 type AccessData = { users: UserRow[]; groups: GroupRow[]; roles: RoleRow[]; menus: { id: string; name: string }[] };
+type UserDetails = { direct_role_ids: string[]; group_ids: string[]; effective_roles: (RoleRow & { sources: string[] })[]; menu_preview: { menu_id: string; label: string; icon?: string; role: string; items: any[] }[] };
+type RoleHolders = { group_ids: string[]; direct_user_ids: string[] };
+type Section = "users" | "groups" | "roles";
 
 const input: React.CSSProperties = { width: "100%", boxSizing: "border-box", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", background: "var(--bg)", color: "var(--fg)", fontSize: 13 };
 const button: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid var(--border)", borderRadius: 6, padding: "7px 10px", background: "var(--card)", color: "var(--fg)", cursor: "pointer", fontSize: 12 };
 const primary: React.CSSProperties = { ...button, border: 0, background: "var(--btn-bg)", color: "var(--btn-fg)", fontWeight: 600 };
-const panel: React.CSSProperties = { border: "1px solid var(--border)", borderRadius: 8, background: "var(--card)", padding: 16, marginBottom: 16 };
+const panel: React.CSSProperties = { border: "1px solid var(--border)", borderRadius: 8, background: "var(--card)", padding: 16, marginBottom: 12 };
 const label: React.CSSProperties = { display: "grid", gap: 5, color: "var(--fg-muted)", fontSize: 11, fontWeight: 600 };
+const th: React.CSSProperties = { textAlign: "left", padding: "9px 11px", color: "var(--fg-muted)", background: "var(--bg)", borderBottom: "1px solid var(--border)", fontSize: 10, textTransform: "uppercase", whiteSpace: "nowrap" };
+const td: React.CSSProperties = { padding: "9px 11px", borderBottom: "1px solid var(--border)", verticalAlign: "middle" };
 
-export function AccessControlPage({ initialTab = "users" }: { initialTab?: "users" | "roles" }) {
-  const [tab, setTab] = useState<"users" | "groups" | "roles">(initialTab);
+export function AccessControlPage({ section = "users" }: { section?: Section }) {
   const [data, setData] = useState<AccessData>({ users: [], groups: [], roles: [], menus: [] });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [editingUser, setEditingUser] = useState<UserRow | null>(null);
-  const [editingRole, setEditingRole] = useState<RoleRow | null>(null);
-  const [newUser, setNewUser] = useState(false);
-  const [groupDraft, setGroupDraft] = useState<GroupRow | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true); setError("");
-    try { setData(await fetchJSON<AccessData>("/api/security/access")); }
-    catch (e: any) { setError(e.message || "Unable to load access control data"); }
-    finally { setLoading(false); }
-  }, []);
+  const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
+  const [selectedId, setSelectedId] = useState(""); const [details, setDetails] = useState<UserDetails | null>(null); const [holders, setHolders] = useState<RoleHolders | null>(null);
+  const [editor, setEditor] = useState<UserRow | GroupRow | RoleRow | null>(null); const [creating, setCreating] = useState(false);
+  const load = useCallback(async () => { setLoading(true); setError(""); try { setData(await fetchJSON<AccessData>("/api/security/access")); } catch (e: any) { setError(e.message || "Unable to load access data"); } finally { setLoading(false); } }, []);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { setTab(initialTab); }, [initialTab]);
-
-  const tabs = [
-    ["users", "Users", UsersRound], ["groups", "Groups", UsersRound], ["roles", "Roles", ShieldCheck],
-  ] as const;
-  return <div style={{ padding: 0, maxWidth: 1120, margin: "0 auto", color: "var(--fg)" }}>
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-      <div><h1 style={{ fontSize: 18, margin: 0 }}>Access Control</h1><div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 3 }}>Manage organization users, groups, and role access.</div></div>
-      <button style={{ ...button, marginLeft: "auto" }} onClick={() => void load()}><RefreshCw size={13} /> Refresh</button>
-    </div>
-    <div role="tablist" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", marginBottom: 16 }}>
-      {tabs.map(([key, title, Icon]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => { setTab(key); setError(""); setNotice(""); }}
-        style={{ ...button, border: 0, borderBottom: tab === key ? "2px solid var(--primary)" : "2px solid transparent", borderRadius: 0, background: "transparent", color: tab === key ? "var(--fg)" : "var(--fg-muted)" }}><Icon size={14} />{title}</button>)}
-    </div>
-    {error && <div role="alert" style={{ ...panel, color: "var(--red)", borderColor: "var(--red)", background: "var(--error-bg)", marginBottom: 12 }}>{error}</div>}
-    {notice && <div role="status" style={{ ...panel, color: "var(--green)", background: "var(--success-bg)", marginBottom: 12 }}>{notice}</div>}
-    {loading ? <p style={{ color: "var(--fg-muted)" }}>Loading…</p> : tab === "users" ? <UsersPanel data={data} editing={editingUser} setEditing={setEditingUser} creating={newUser} setCreating={setNewUser} onSaved={async () => { setEditingUser(null); setNewUser(false); setNotice("User saved."); await load(); }} />
-      : tab === "groups" ? <GroupsPanel groups={data.groups} users={data.users} draft={groupDraft} setDraft={setGroupDraft} onSaved={async () => { setGroupDraft(null); setNotice("Group saved."); await load(); }} />
-        : <RolesPanel roles={data.roles} menus={data.menus} editing={editingRole} setEditing={setEditingRole} onSaved={async () => { setEditingRole(null); setNotice("Role saved."); await load(); }} />}
+  useEffect(() => { const rows = section === "users" ? data.users : section === "groups" ? data.groups : data.roles; if (!rows.some((r: any) => r.id === selectedId)) setSelectedId(rows[0]?.id || ""); }, [section, data, selectedId]);
+  useEffect(() => { setDetails(null); setHolders(null); if (!selectedId) return; if (section === "users") fetchJSON<UserDetails>(`/api/security/access/users/${selectedId}/details`).then(setDetails).catch((e: any) => setError(e.message)); if (section === "roles") fetchJSON<RoleHolders>(`/api/security/access/roles/${selectedId}/holders`).then(setHolders).catch((e: any) => setError(e.message)); }, [section, selectedId]);
+  const titles = { users: ["Users", "Manage users, their group membership, and role access."], groups: ["Groups", "Manage groups and the roles granted to each group."], roles: ["Roles", "Manage roles and review their group and direct user assignments."] } as const;
+  const [title, subtitle] = titles[section];
+  const saved = async (message: string) => { setEditor(null); setCreating(false); setNotice(message); await load(); };
+  return <div style={{ maxWidth: 1120, margin: "0 auto", color: "var(--fg)" }}>
+    <header style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><div><h1 style={{ fontSize: 18, margin: 0 }}>{title}</h1><div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 3 }}>{subtitle}</div></div><button style={{ ...button, marginLeft: "auto" }} onClick={() => void load()}><RefreshCw size={13} />Refresh</button></header>
+    {error && <div role="alert" style={{ ...panel, color: "var(--red)" }}>{error}</div>}{notice && <div role="status" style={{ ...panel, color: "var(--green)" }}>{notice}</div>}
+    {loading ? <p style={{ color: "var(--fg-muted)" }}>Loading…</p> : section === "users" ? <UsersMaster data={data} selectedId={selectedId} select={setSelectedId} details={details} setDetails={setDetails} editor={editor as UserRow | null} setEditor={setEditor} creating={creating} setCreating={setCreating} onSaved={() => saved("User saved.")} /> : section === "groups" ? <GroupsMaster data={data} selectedId={selectedId} select={setSelectedId} editor={editor as GroupRow | null} setEditor={setEditor} creating={creating} setCreating={setCreating} onSaved={() => saved("Group saved.")} /> : <RolesMaster data={data} selectedId={selectedId} select={setSelectedId} holders={holders} editor={editor as RoleRow | null} setEditor={setEditor} creating={creating} setCreating={setCreating} onSaved={() => saved("Role saved.")} />}
   </div>;
 }
 
-function UsersPanel({ data, editing, setEditing, creating, setCreating, onSaved }: {
-  data: AccessData; editing: UserRow | null; setEditing: (u: UserRow | null) => void;
-  creating: boolean; setCreating: (v: boolean) => void; onSaved: () => void;
-}) {
-  const [displayName, setDisplayName] = useState(""); const [email, setEmail] = useState("");
-  const [username, setUsername] = useState(""); const [password, setPassword] = useState("");
-  const [roles, setRoles] = useState<string[]>(["app_developer"]); const [groupIds, setGroupIds] = useState<string[]>([]);
-  const [disabled, setDisabled] = useState(false); const [resetPassword, setResetPassword] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    setError(""); setDisplayName(editing?.display_name || ""); setEmail(editing?.email || "");
-    setUsername(""); setPassword(""); setRoles(editing?.roles || ["app_developer"]);
-    setGroupIds(editing?.group_ids || []); setDisabled(editing?.disabled || false); setResetPassword("");
-  }, [editing, creating]);
-  function toggle(values: string[], value: string, set: (v: string[]) => void) { set(values.includes(value) ? values.filter(x => x !== value) : [...values, value]); }
-  async function save(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setError("");
-    try {
-      if (creating) await fetchJSON("/api/security/access/users", { method: "POST", body: JSON.stringify({ username, password, display_name: displayName, email, roles, group_ids: groupIds }) });
-      else if (editing) {
-        await fetchJSON(`/api/security/access/users/${editing.id}`, { method: "PUT", body: JSON.stringify({ display_name: displayName, email, roles, group_ids: groupIds, disabled }) });
-        if (resetPassword) await fetchJSON(`/api/security/access/users/${editing.id}/password`, { method: "POST", body: JSON.stringify({ password: resetPassword }) });
-      }
-      onSaved();
-    } catch (err: any) { setError(err.message || "Could not save user"); }
-    finally { setBusy(false); }
-  }
-  const openCreate = () => { setEditing(null); setCreating(true); };
+function UsersMaster({ data, selectedId, select, details, setDetails, editor, setEditor, creating, setCreating, onSaved }: { data: AccessData; selectedId: string; select: (id: string) => void; details: UserDetails | null; setDetails: (d: UserDetails) => void; editor: UserRow | null; setEditor: (u: UserRow | null) => void; creating: boolean; setCreating: (v: boolean) => void; onSaved: () => void }) {
+  const [tab, setTab] = useState("Groups"); const [displayName, setDisplayName] = useState(""); const [email, setEmail] = useState(""); const [username, setUsername] = useState(""); const [password, setPassword] = useState(""); const [resetPassword, setResetPassword] = useState(""); const [disabled, setDisabled] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [groups, setGroups] = useState<string[]>([]); const [roles, setRoles] = useState<string[]>([]);
+  useEffect(() => { setDisplayName(editor?.display_name || ""); setEmail(editor?.email || ""); setUsername(""); setPassword(""); setResetPassword(""); setDisabled(editor?.disabled || false); setError(""); }, [editor, creating]);
+  useEffect(() => { setGroups(details?.group_ids || []); setRoles(details?.direct_role_ids || []); }, [details]);
+  const toggle = (list: string[], id: string) => list.includes(id) ? list.filter(x => x !== id) : [...list, id];
+  async function saveUser(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(""); try { if (creating) { const result = await fetchJSON<{ user: UserRow }>("/api/security/access/users", { method: "POST", body: JSON.stringify({ username, password, display_name: displayName, email, group_ids: groups, direct_role_ids: roles }) }); select(result.user.id); } else if (editor) { await fetchJSON(`/api/security/access/users/${editor.id}`, { method: "PUT", body: JSON.stringify({ display_name: displayName, email, disabled }) }); if (resetPassword) await fetchJSON(`/api/security/access/users/${editor.id}/password`, { method: "POST", body: JSON.stringify({ password: resetPassword }) }); } onSaved(); } catch (e: any) { setError(e.message || "Could not save user"); } finally { setBusy(false); } }
+  async function saveAssignment(kind: "groups" | "roles", values: string[]) { if (!selectedId) return; setBusy(true); setError(""); try { await fetchJSON(`/api/security/access/users/${selectedId}/${kind}`, { method: "PUT", body: JSON.stringify(kind === "groups" ? { group_ids: values } : { role_ids: values }) }); const updated = await fetchJSON<UserDetails>(`/api/security/access/users/${selectedId}/details`); setDetails(updated); setGroups(updated.group_ids); setRoles(updated.direct_role_ids); onSaved(); } catch (e: any) { setError(e.message || "Could not update assignment"); } finally { setBusy(false); } }
+  const user = data.users.find(u => u.id === selectedId); const tabs = ["Groups", "Direct roles", "All roles", "Menu preview"];
   return <>
-    <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}><strong>{data.users.length} users</strong><button style={{ ...primary, marginLeft: "auto" }} onClick={openCreate}><Plus size={13} /> Add user</button></div>
-    {(creating || editing) && <form style={panel} onSubmit={save}>
-      <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}><strong>{creating ? "Create user" : `Edit ${editing?.username || editing?.display_name}`}</strong><button type="button" style={{ ...button, marginLeft: "auto", padding: 5 }} onClick={() => { setCreating(false); setEditing(null); }}><X size={14} /></button></div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-        {creating && <label style={label}>Username<input style={input} required autoComplete="off" value={username} onChange={e => setUsername(e.target.value)} /></label>}
-        <label style={label}>Display name<input style={input} value={displayName} onChange={e => setDisplayName(e.target.value)} /></label>
-        <label style={label}>Email<input style={input} type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
-        {creating && <label style={label}>Initial password<input style={input} type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} /></label>}
-        {editing && editing.username && <label style={label}>Reset password<input style={input} type="password" autoComplete="new-password" placeholder="Leave blank to keep current password" value={resetPassword} onChange={e => setResetPassword(e.target.value)} /></label>}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginTop: 14 }}>
-        <fieldset style={{ border: "1px solid var(--border)", borderRadius: 6, padding: 10 }}><legend style={{ color: "var(--fg-muted)", fontSize: 11 }}>Roles</legend>
-          {data.roles.map(r => <label key={r.id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, padding: "3px 0" }}><input type="checkbox" checked={roles.includes(r.name)} onChange={() => toggle(roles, r.name, setRoles)} />{r.label || r.name}</label>)}
-          {editing?.roles.includes("admin") && <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, padding: "3px 0", color: "var(--fg-muted)" }}><input type="checkbox" checked disabled />Superuser (protected)</label>}
-        </fieldset>
-        <fieldset style={{ border: "1px solid var(--border)", borderRadius: 6, padding: 10 }}><legend style={{ color: "var(--fg-muted)", fontSize: 11 }}>Groups</legend>
-          {data.groups.length ? data.groups.map(g => <label key={g.id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, padding: "3px 0" }}><input type="checkbox" checked={groupIds.includes(g.id)} onChange={() => toggle(groupIds, g.id, setGroupIds)} />{g.name}</label>) : <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>Create groups in the Groups tab.</span>}
-        </fieldset>
-      </div>
-      {!creating && <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, marginTop: 12 }}><input type="checkbox" checked={disabled} onChange={e => setDisabled(e.target.checked)} />Account disabled</label>}
-      {error && <p style={{ color: "var(--red)", fontSize: 12 }}>{error}</p>}
-      <button style={{ ...primary, marginTop: 14 }} disabled={busy}><Save size={13} />{busy ? "Saving…" : "Save user"}</button>
-    </form>}
-    <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-      <thead><tr>{["User", "Email", "Roles", "Groups", "Last login", "Status", ""].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
-      <tbody>{data.users.map(u => <tr key={u.id}>
-        <td style={td}><strong>{u.display_name || u.username || u.id}</strong><div style={{ color: "var(--fg-muted)", fontSize: 11 }}>{u.username || (u.kind === "service" ? "Service account" : "SSO account")}</div></td>
-        <td style={td}>{u.email || "—"}</td><td style={td}>{u.roles.map(r => <Pill key={r}>{r}</Pill>)}</td>
-        <td style={td}>{u.group_ids.map(id => data.groups.find(g => g.id === id)?.name).filter(Boolean).map(g => <Pill key={g}>{g}</Pill>) || "—"}</td>
-        <td style={td}>{u.last_login_at ? new Date(u.last_login_at * 1000).toLocaleString() : "Never"}</td>
-        <td style={td}><span style={{ color: u.disabled ? "var(--red)" : "var(--green)" }}>{u.disabled ? "Disabled" : "Active"}</span></td>
-        <td style={td}><button style={button} onClick={() => { setCreating(false); setEditing(u); }}><KeyRound size={12} /> Manage</button></td>
-      </tr>)}</tbody>
-    </table></div>
+    <div style={{ display: "flex", alignItems: "center", marginBottom: 9 }}><strong>{data.users.length} users</strong><button style={{ ...primary, marginLeft: "auto" }} onClick={() => { setEditor(null); setCreating(true); setGroups([]); setRoles([]); }}><Plus size={13} />Add user</button></div>
+    {creating || editor ? <form style={panel} onSubmit={saveUser}><div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}><strong>{creating ? "Create user" : `Edit ${editor?.username || editor?.display_name}`}</strong><button type="button" style={{ ...button, marginLeft: "auto", padding: 5 }} onClick={() => { setCreating(false); setEditor(null); }}><X size={14} /></button></div><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 }}>{creating && <label style={label}>Username<input required style={input} autoComplete="off" value={username} onChange={e => setUsername(e.target.value)} /></label>}<label style={label}>Display name<input style={input} value={displayName} onChange={e => setDisplayName(e.target.value)} /></label><label style={label}>Email<input style={input} type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>{creating && <label style={label}>Initial password<input required style={input} type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} /></label>}{editor?.username && <label style={label}>Reset password<input style={input} type="password" autoComplete="new-password" placeholder="Leave blank to keep current password" value={resetPassword} onChange={e => setResetPassword(e.target.value)} /></label>}</div>{!creating && <label style={{ display: "flex", gap: 7, marginTop: 12, fontSize: 12 }}><input type="checkbox" checked={disabled} onChange={e => setDisabled(e.target.checked)} />Account disabled</label>}{error && <p style={{ color: "var(--red)", fontSize: 12 }}>{error}</p>}<button disabled={busy} style={{ ...primary, marginTop: 12 }}><Save size={13} />Save user</button></form> : null}
+    <Table><thead><tr>{["User", "Email", "Groups", "Roles", "Last login", "Status"].map(x => <th key={x} style={th}>{x}</th>)}</tr></thead><tbody>{data.users.map(u => <tr key={u.id} onClick={() => { select(u.id); setCreating(false); setEditor(null); }} style={{ cursor: "pointer", background: u.id === selectedId ? "var(--nav-active)" : undefined }}><td style={td}><strong>{u.display_name || u.username || u.id}</strong><div style={{ color: "var(--fg-muted)", fontSize: 11 }}>{u.username || (u.kind === "service" ? "Service account" : "SSO account")}</div></td><td style={td}>{u.email || "—"}</td><td style={td}>{u.group_ids.map(id => data.groups.find(g => g.id === id)?.name).filter(Boolean).join(", ") || "—"}</td><td style={td}>{u.direct_role_ids.map(id => data.roles.find(r => r.id === id)?.label || data.roles.find(r => r.id === id)?.name).filter(Boolean).join(", ") || "—"}</td><td style={td}>{u.last_login_at ? new Date(u.last_login_at * 1000).toLocaleString() : "Never"}</td><td style={td}><span style={{ color: u.disabled ? "var(--red)" : "var(--green)" }}>{u.disabled ? "Disabled" : "Active"}</span></td></tr>)}</tbody></Table>
+    {user && <section style={{ ...panel, marginTop: 12, marginBottom: 0 }}><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><strong>{user.display_name || user.username} access</strong><button style={{ ...button, marginLeft: "auto" }} onClick={() => { setCreating(false); setEditor(user); }}><KeyRound size={12} />Edit user</button></div><Tabs items={tabs} active={tab} setActive={setTab} />{tab === "Groups" && <AssignmentList title="Groups this user belongs to" rows={data.groups.map(g => ({ id: g.id, name: g.name, description: g.description }))} selected={groups} toggle={id => setGroups(toggle(groups, id))} save={() => saveAssignment("groups", groups)} busy={busy} empty="No groups are available." />}{tab === "Direct roles" && <AssignmentList title="Roles granted directly to this user" rows={data.roles.map(r => ({ id: r.id, name: r.label || r.name, description: r.name }))} selected={roles} toggle={id => setRoles(toggle(roles, id))} save={() => saveAssignment("roles", roles)} busy={busy} empty="No roles are available." />}{tab === "All roles" && <Table><thead><tr><th style={th}>Role</th><th style={th}>Granted through</th></tr></thead><tbody>{(details?.effective_roles || []).map(r => <tr key={r.id}><td style={td}>{r.label || r.name}</td><td style={td}>{r.sources.join(", ")}</td></tr>)}{!details?.effective_roles.length && <Empty colSpan={2}>No roles assigned directly or through groups.</Empty>}</tbody></Table>}{tab === "Menu preview" && <MenuPreview menus={details?.menu_preview || []} />}{error && <p style={{ color: "var(--red)", fontSize: 12 }}>{error}</p>}</section>}
   </>;
 }
 
-function GroupsPanel({ groups, users, draft, setDraft, onSaved }: { groups: GroupRow[]; users: UserRow[]; draft: GroupRow | null; setDraft: (g: GroupRow | null) => void; onSaved: () => void }) {
-  const [name, setName] = useState(""); const [description, setDescription] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  useEffect(() => { setName(draft?.name || ""); setDescription(draft?.description || ""); setError(""); }, [draft]);
-  async function save(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setError("");
-    try { await fetchJSON(draft?.id ? `/api/security/access/groups/${draft.id}` : "/api/security/access/groups", { method: draft?.id ? "PUT" : "POST", body: JSON.stringify({ name, description }) }); onSaved(); }
-    catch (err: any) { setError(err.message || "Could not save group"); } finally { setBusy(false); }
-  }
-  async function remove(group: GroupRow) {
-    if (!confirm(`Delete group “${group.name}”? Its user assignments will be removed.`)) return;
-    try { await fetchJSON(`/api/security/access/groups/${group.id}`, { method: "DELETE" }); onSaved(); } catch (e: any) { setError(e.message); }
-  }
-  return <>
-    <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}><strong>{groups.length} groups</strong><button style={{ ...primary, marginLeft: "auto" }} onClick={() => setDraft({ id: "", name: "", description: "", user_ids: [] })}><Plus size={13} /> Add group</button></div>
-    {draft && <form style={{ ...panel, display: "grid", gridTemplateColumns: "minmax(180px, 1fr) 2fr auto auto", alignItems: "end", gap: 10 }} onSubmit={save}>
-      <label style={label}>Group name<input style={input} required value={name} onChange={e => setName(e.target.value)} /></label>
-      <label style={label}>Description<input style={input} value={description} onChange={e => setDescription(e.target.value)} /></label>
-      <button style={primary} disabled={busy}><Save size={13} />Save</button><button type="button" style={button} onClick={() => setDraft(null)}>Cancel</button>
-      {error && <span style={{ gridColumn: "1 / -1", color: "var(--red)", fontSize: 12 }}>{error}</span>}
-    </form>}
-    <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-      <thead><tr>{["Group", "Description", "Members", ""].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
-      <tbody>{groups.map(g => <tr key={g.id}><td style={td}><strong><UsersRound size={13} style={{ verticalAlign: "-2px", marginRight: 6 }} />{g.name}</strong></td><td style={td}>{g.description || "—"}</td>
-        <td style={td}>{g.user_ids.map(id => users.find(u => u.id === id)?.display_name || users.find(u => u.id === id)?.username).filter(Boolean).join(", ") || "—"}</td>
-        <td style={td}><div style={{ display: "flex", gap: 5 }}><button style={button} onClick={() => setDraft(g)}>Edit</button><button style={{ ...button, color: "var(--red)" }} onClick={() => void remove(g)}><Trash2 size={12} /></button></div></td></tr>)}</tbody>
-    </table></div>
+function GroupsMaster({ data, selectedId, select, editor, setEditor, creating, setCreating, onSaved }: { data: AccessData; selectedId: string; select: (id: string) => void; editor: GroupRow | null; setEditor: (g: GroupRow | null) => void; creating: boolean; setCreating: (v: boolean) => void; onSaved: () => void }) {
+  const [name, setName] = useState(""); const [description, setDescription] = useState(""); const [roleIds, setRoleIds] = useState<string[]>([]); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const group = data.groups.find(g => g.id === selectedId);
+  useEffect(() => { setName(editor?.name || ""); setDescription(editor?.description || ""); setError(""); }, [editor, creating]);
+  useEffect(() => { setRoleIds(group?.role_ids || []); }, [group]);
+  const toggle = (id: string) => setRoleIds(v => v.includes(id) ? v.filter(x => x !== id) : [...v, id]);
+  async function saveGroup(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(""); try { const result = await fetchJSON<{ group?: GroupRow }>(editor?.id ? `/api/security/access/groups/${editor.id}` : "/api/security/access/groups", { method: editor?.id ? "PUT" : "POST", body: JSON.stringify({ name, description }) }); if (result.group?.id) select(result.group.id); onSaved(); } catch (e: any) { setError(e.message || "Could not save group"); } finally { setBusy(false); } }
+  async function remove() { if (!group || !confirm(`Delete group “${group.name}”? Its user and role assignments will be removed.`)) return; try { await fetchJSON(`/api/security/access/groups/${group.id}`, { method: "DELETE" }); select(""); onSaved(); } catch (e: any) { setError(e.message); } }
+  async function saveRoles() { if (!group) return; setBusy(true); setError(""); try { await fetchJSON(`/api/security/access/groups/${group.id}/roles`, { method: "PUT", body: JSON.stringify({ role_ids: roleIds }) }); onSaved(); } catch (e: any) { setError(e.message || "Could not update group roles"); } finally { setBusy(false); } }
+  return <><div style={{ display: "flex", alignItems: "center", marginBottom: 9 }}><strong>{data.groups.length} groups</strong><button style={{ ...primary, marginLeft: "auto" }} onClick={() => { setCreating(true); setEditor(null); }}><Plus size={13} />Add group</button></div>{(creating || editor) && <form style={{ ...panel, display: "grid", gridTemplateColumns: "minmax(180px,1fr) 2fr auto auto", alignItems: "end", gap: 10 }} onSubmit={saveGroup}><label style={label}>Group name<input required style={input} value={name} onChange={e => setName(e.target.value)} /></label><label style={label}>Description<input style={input} value={description} onChange={e => setDescription(e.target.value)} /></label><button style={primary} disabled={busy}><Save size={13} />Save</button><button type="button" style={button} onClick={() => { setCreating(false); setEditor(null); }}>Cancel</button>{error && <span style={{ gridColumn: "1 / -1", color: "var(--red)", fontSize: 12 }}>{error}</span>}</form>}
+    <Table><thead><tr>{["Group", "Description", "Members", "Roles", ""].map(x => <th key={x} style={th}>{x}</th>)}</tr></thead><tbody>{data.groups.map(g => <tr key={g.id} onClick={() => { select(g.id); setCreating(false); setEditor(null); }} style={{ cursor: "pointer", background: g.id === selectedId ? "var(--nav-active)" : undefined }}><td style={td}><UsersRound size={13} style={{ verticalAlign: "-2px", marginRight: 6 }} /><strong>{g.name}</strong></td><td style={td}>{g.description || "—"}</td><td style={td}>{g.user_ids.length}</td><td style={td}>{g.role_ids.map(id => data.roles.find(r => r.id === id)?.label || data.roles.find(r => r.id === id)?.name).filter(Boolean).join(", ") || "—"}</td><td style={td}><button style={button} onClick={e => { e.stopPropagation(); setCreating(false); setEditor(g); }}><KeyRound size={12} />Edit</button></td></tr>)}</tbody></Table>
+    {group && <section style={{ ...panel, marginTop: 12, marginBottom: 0 }}><div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}><div><strong>Roles assigned to {group.name}</strong><div style={{ fontSize: 11, color: "var(--fg-muted)", marginTop: 3 }}>Members inherit these roles.</div></div><div style={{ marginLeft: "auto", display: "flex", gap: 6 }}><button style={button} onClick={() => { setCreating(false); setEditor(group); }}>Edit group</button><button style={{ ...button, color: "var(--red)" }} onClick={() => void remove()}><Trash2 size={12} />Delete</button></div></div><AssignmentList title="Group roles" rows={data.roles.map(r => ({ id: r.id, name: r.label || r.name, description: r.name }))} selected={roleIds} toggle={toggle} save={saveRoles} busy={busy} empty="No roles are available." />{error && <p style={{ color: "var(--red)", fontSize: 12 }}>{error}</p>}</section>}
   </>;
 }
 
-function RolesPanel({ roles, menus, editing, setEditing, onSaved }: { roles: RoleRow[]; menus: AccessData["menus"]; editing: RoleRow | null; setEditing: (r: RoleRow | null) => void; onSaved: () => void }) {
-  const [name, setName] = useState(""); const [labelText, setLabelText] = useState(""); const [menuId, setMenuId] = useState(""); const [description, setDescription] = useState(""); const [enabled, setEnabled] = useState(true); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  useEffect(() => { setName(editing?.name || ""); setLabelText(editing?.label || ""); setMenuId(editing?.menu_id || ""); setDescription(editing?.description || ""); setEnabled(editing?.enabled ?? true); setError(""); }, [editing]);
-  async function save(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setError("");
-    try { await fetchJSON(editing?.id ? `/api/security/access/roles/${editing.id}` : "/api/security/access/roles", { method: editing?.id ? "PUT" : "POST", body: JSON.stringify({ name, label: labelText, menu_id: menuId || null, description, enabled }) }); onSaved(); }
-    catch (err: any) { setError(err.message || "Could not save role"); } finally { setBusy(false); }
-  }
-  async function remove(role: RoleRow) {
-    if (!confirm(`Delete role “${role.label || role.name}”? User assignments using it will no longer grant this menu.`)) return;
-    try { await fetchJSON(`/api/security/access/roles/${role.id}`, { method: "DELETE" }); onSaved(); } catch (e: any) { setError(e.message); }
-  }
-  return <>
-    <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}><strong>{roles.length} roles</strong><button style={{ ...primary, marginLeft: "auto" }} onClick={() => setEditing({ id: "", name: "", label: "", menu_id: null, description: "", enabled: true })}><Plus size={13} /> Add role</button></div>
-    {editing && <form style={{ ...panel, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }} onSubmit={save}>
-      <label style={label}>Role key<input style={input} required pattern="[a-zA-Z0-9_.-]+" disabled={!!editing.id} value={name} onChange={e => setName(e.target.value)} /></label>
-      <label style={label}>Display name<input style={input} value={labelText} onChange={e => setLabelText(e.target.value)} /></label>
-      <label style={label}>Menu<select style={input} value={menuId} onChange={e => setMenuId(e.target.value)}><option value="">No menu</option>{menus.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
-      <label style={label}>Description<input style={input} value={description} onChange={e => setDescription(e.target.value)} /></label>
-      <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />Enabled</label>
-      {error && <div style={{ color: "var(--red)", fontSize: 12, gridColumn: "1 / -1" }}>{error}</div>}
-      <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8 }}><button style={primary} disabled={busy}><Save size={13} />Save role</button><button type="button" style={button} onClick={() => setEditing(null)}>Cancel</button></div>
-    </form>}
-    <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-      <thead><tr>{["Role", "Menu", "Description", "Status", ""].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
-      <tbody>{roles.map(r => <tr key={r.id}><td style={td}><strong>{r.label || r.name}</strong><div style={{ color: "var(--fg-muted)", fontSize: 11 }}>{r.name}</div></td><td style={td}>{menus.find(m => m.id === r.menu_id)?.name || "—"}</td><td style={td}>{r.description || "—"}</td><td style={td}>{r.enabled ? "Enabled" : "Disabled"}</td><td style={td}><div style={{ display: "flex", gap: 5 }}><button style={button} onClick={() => setEditing(r)}>Edit</button><button style={{ ...button, color: "var(--red)" }} onClick={() => void remove(r)}><Trash2 size={12} /></button></div></td></tr>)}</tbody>
-    </table></div>
+function RolesMaster({ data, selectedId, select, holders, editor, setEditor, creating, setCreating, onSaved }: { data: AccessData; selectedId: string; select: (id: string) => void; holders: RoleHolders | null; editor: RoleRow | null; setEditor: (r: RoleRow | null) => void; creating: boolean; setCreating: (v: boolean) => void; onSaved: () => void }) {
+  const [tab, setTab] = useState("Groups"); const [name, setName] = useState(""); const [labelText, setLabelText] = useState(""); const [menuId, setMenuId] = useState(""); const [description, setDescription] = useState(""); const [enabled, setEnabled] = useState(true); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const role = data.roles.find(r => r.id === selectedId);
+  useEffect(() => { setName(editor?.name || ""); setLabelText(editor?.label || ""); setMenuId(editor?.menu_id || ""); setDescription(editor?.description || ""); setEnabled(editor?.enabled ?? true); setError(""); }, [editor, creating]);
+  async function saveRole(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(""); try { const result = await fetchJSON<{ role?: RoleRow }>(editor?.id ? `/api/security/access/roles/${editor.id}` : "/api/security/access/roles", { method: editor?.id ? "PUT" : "POST", body: JSON.stringify({ name, label: labelText, menu_id: menuId || null, description, enabled }) }); if (result.role?.id) select(result.role.id); onSaved(); } catch (e: any) { setError(e.message || "Could not save role"); } finally { setBusy(false); } }
+  async function remove() { if (!role || !confirm(`Delete role “${role.label || role.name}”? Its user and group assignments will be removed.`)) return; try { await fetchJSON(`/api/security/access/roles/${role.id}`, { method: "DELETE" }); select(""); onSaved(); } catch (e: any) { setError(e.message); } }
+  return <><div style={{ display: "flex", alignItems: "center", marginBottom: 9 }}><strong>{data.roles.length} roles</strong><button style={{ ...primary, marginLeft: "auto" }} onClick={() => { setCreating(true); setEditor(null); }}><Plus size={13} />Add role</button></div>{(creating || editor) && <form style={panel} onSubmit={saveRole}><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}><label style={label}>Role key<input required pattern="[a-zA-Z0-9_.-]+" disabled={!!editor?.id} style={input} value={name} onChange={e => setName(e.target.value)} /></label><label style={label}>Display name<input style={input} value={labelText} onChange={e => setLabelText(e.target.value)} /></label><label style={label}>Menu<select style={input} value={menuId} onChange={e => setMenuId(e.target.value)}><option value="">No menu</option>{data.menus.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label style={label}>Description<input style={input} value={description} onChange={e => setDescription(e.target.value)} /></label><label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />Enabled</label></div>{error && <p style={{ color: "var(--red)", fontSize: 12 }}>{error}</p>}<div style={{ display: "flex", gap: 8, marginTop: 12 }}><button style={primary} disabled={busy}><Save size={13} />Save role</button><button type="button" style={button} onClick={() => { setCreating(false); setEditor(null); }}>Cancel</button></div></form>}
+    <Table><thead><tr>{["Role", "Menu", "Description", "Status", ""].map(x => <th key={x} style={th}>{x}</th>)}</tr></thead><tbody>{data.roles.map(r => <tr key={r.id} onClick={() => { select(r.id); setCreating(false); setEditor(null); }} style={{ cursor: "pointer", background: r.id === selectedId ? "var(--nav-active)" : undefined }}><td style={td}><strong>{r.label || r.name}</strong><div style={{ color: "var(--fg-muted)", fontSize: 11 }}>{r.name}</div></td><td style={td}>{data.menus.find(m => m.id === r.menu_id)?.name || "—"}</td><td style={td}>{r.description || "—"}</td><td style={td}>{r.enabled ? "Enabled" : "Disabled"}</td><td style={td}><button style={button} onClick={e => { e.stopPropagation(); setCreating(false); setEditor(r); }}>Edit</button></td></tr>)}</tbody></Table>
+    {role && <section style={{ ...panel, marginTop: 12, marginBottom: 0 }}><div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}><div><strong>{role.label || role.name} assignments</strong><div style={{ fontSize: 11, color: "var(--fg-muted)", marginTop: 3 }}>Direct user grants and group grants are listed separately.</div></div><div style={{ marginLeft: "auto", display: "flex", gap: 6 }}><button style={button} onClick={() => { setCreating(false); setEditor(role); }}>Edit role</button><button style={{ ...button, color: "var(--red)" }} onClick={() => void remove()}><Trash2 size={12} />Delete</button></div></div><Tabs items={["Groups", "Direct users"]} active={tab} setActive={setTab} />{tab === "Groups" ? <HolderTable title="Groups holding this role" rows={(holders?.group_ids || []).map(id => data.groups.find(g => g.id === id)).filter(Boolean).map(g => ({ id: g!.id, name: g!.name, detail: g!.description }))} /> : <HolderTable title="Users holding this role directly" rows={(holders?.direct_user_ids || []).map(id => data.users.find(u => u.id === id)).filter(Boolean).map(u => ({ id: u!.id, name: u!.display_name || u!.username || u!.id, detail: u!.email }))} />}{error && <p style={{ color: "var(--red)", fontSize: 12 }}>{error}</p>}</section>}
   </>;
 }
 
-function Pill({ children }: { children: React.ReactNode }) { return <span style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "2px 7px", fontSize: 10, color: "var(--fg-muted)" }}>{children}</span>; }
-const th: React.CSSProperties = { textAlign: "left", padding: "9px 11px", color: "var(--fg-muted)", background: "var(--bg)", borderBottom: "1px solid var(--border)", fontSize: 10, textTransform: "uppercase", whiteSpace: "nowrap" };
-const td: React.CSSProperties = { padding: "9px 11px", borderBottom: "1px solid var(--border)", verticalAlign: "middle" };
+function AssignmentList({ title, rows, selected, toggle, save, busy, empty }: { title: string; rows: { id: string; name: string; description?: string }[]; selected: string[]; toggle: (id: string) => void; save: () => void; busy: boolean; empty: string }) { return <div style={{ paddingTop: 10 }}><div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}><strong style={{ fontSize: 12 }}>{title}</strong><button style={{ ...primary, marginLeft: "auto" }} disabled={busy} onClick={save}><Save size={12} />Save assignments</button></div>{rows.length ? <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 6 }}>{rows.map(r => <label key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", fontSize: 12, cursor: "pointer" }}><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggle(r.id)} /><span>{r.name}{r.description && <small style={{ display: "block", color: "var(--fg-muted)" }}>{r.description}</small>}</span></label>)}</div> : <p style={{ color: "var(--fg-muted)", fontSize: 12 }}>{empty}</p>}</div>; }
+function MenuPreview({ menus }: { menus: UserDetails["menu_preview"] }) { if (!menus.length) return <p style={{ color: "var(--fg-muted)", fontSize: 12, marginBottom: 0 }}>No menu is granted by this user's roles.</p>; return <div style={{ display: "grid", gap: 8, paddingTop: 10 }}>{menus.map(m => <div key={m.menu_id} style={{ border: "1px solid var(--border)", borderRadius: 6, padding: 10 }}><strong>{m.label}</strong><small style={{ color: "var(--fg-muted)", marginLeft: 8 }}>via {m.role}</small><MenuNodes nodes={m.items} depth={0} /></div>)}</div>; }
+function MenuNodes({ nodes, depth }: { nodes: any[]; depth: number }) { return <div style={{ display: "grid", gap: 4, marginTop: 6 }}>{nodes.map((node, i) => <div key={`${node.label}-${i}`} style={{ marginLeft: depth * 14, fontSize: 12, color: "var(--fg-muted)" }}>{node.type === "group" ? <><strong style={{ color: "var(--fg)" }}>{node.label}</strong><MenuNodes nodes={node.items || []} depth={depth + 1} /></> : <span>• {node.label}</span>}</div>)}</div>; }
+function HolderTable({ title, rows }: { title: string; rows: { id: string; name: string; detail?: string }[] }) { return <div style={{ fontSize: 12 }}><strong>{title}</strong><Table><thead><tr><th style={th}>Name</th><th style={th}>Details</th></tr></thead><tbody>{rows.map(r => <tr key={r.id}><td style={td}>{r.name}</td><td style={td}>{r.detail || "—"}</td></tr>)}{!rows.length && <Empty colSpan={2}>No assignments.</Empty>}</tbody></Table></div>; }
+function Tabs({ items, active, setActive }: { items: string[]; active: string; setActive: (s: string) => void }) { return <div role="tablist" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)" }}>{items.map(x => <button key={x} role="tab" aria-selected={active === x} onClick={() => setActive(x)} style={{ ...button, border: 0, borderBottom: active === x ? "2px solid var(--primary)" : "2px solid transparent", borderRadius: 0, background: "transparent", color: active === x ? "var(--fg)" : "var(--fg-muted)" }}>{x}</button>)}</div>; }
+function Table({ children }: { children: React.ReactNode }) { return <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>{children}</table></div>; }
+function Empty({ colSpan, children }: { colSpan: number; children: React.ReactNode }) { return <tr><td colSpan={colSpan} style={{ ...td, textAlign: "center", color: "var(--fg-muted)" }}>{children}</td></tr>; }

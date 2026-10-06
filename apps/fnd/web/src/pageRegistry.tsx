@@ -17,8 +17,9 @@ import { SecretStorePage } from "./pages/SecretStorePage";
 import { SkillsPage } from "./pages/SkillsPage";
 import { ServiceAccountsPage } from "./pages/ServiceAccountsPage";
 
-function UsersPage() { return <AccessControlPage initialTab="users" />; }
-function RolesPage() { return <AccessControlPage initialTab="roles" />; }
+function UsersPage() { return <AccessControlPage section="users" />; }
+function GroupsPage() { return <AccessControlPage section="groups" />; }
+function RolesPage() { return <AccessControlPage section="roles" />; }
 
 export const pages: PageRegistration[] = [
   { key: "applications.manage", component: ApplicationsManagePage },
@@ -37,6 +38,7 @@ export const pages: PageRegistration[] = [
   { key: "security.service_accounts", component: ServiceAccountsPage, scroll: true },
   { key: "security.secrets", component: SecretStorePage, scroll: true },
   { key: "security.users", component: UsersPage, scroll: true },
+  { key: "security.groups", component: GroupsPage, scroll: true },
   { key: "security.roles", component: RolesPage, scroll: true },
   { key: "developer.functions", component: FunctionsPage, scroll: true },
   { key: "developer.menus", component: MenusPage, scroll: true },
